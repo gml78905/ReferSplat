@@ -17,7 +17,7 @@ scene based on natural language descriptions.
 This task requires the model to identify newly
 described objects that may be occluded or not
 directly visible in a novel view, posing a significant challenge for 3D multi-modal understanding. Developing this capability is crucial for advancing embodied AI. To support research in this
-area, we construct the first R3DGS dataset, **RefLERF**. Our analysis reveals that 3D multi-modal
+area, we construct the first R3DGS dataset, **Ref-LERF**. Our analysis reveals that 3D multi-modal
 understanding and spatial relationship modeling
 are key challenges for R3DGS. To address these
 challenges, we propose **ReferSplat**, a framework
@@ -29,7 +29,7 @@ task and 3D open-vocabulary segmentation benchmarks. Code, trained models, and t
 be publicly released.
 ![ReferSplat Example](teaser.png)
 ## Datasets
-The **RefLERF dataset** is accessible for download via the following link:https://pan.baidu.com/s/1D9yDNfUrK-d8eGO33Avkpg?pwd=ugs3
+The **Ref-LERF dataset** is accessible for download via the following link:https://pan.baidu.com/s/1D9yDNfUrK-d8eGO33Avkpg?pwd=ugs3
 ```bash
 <path to ref-lerf dataset>
 |---figurines
@@ -39,7 +39,7 @@ The **RefLERF dataset** is accessible for download via the following link:https:
 ```
 ## Checkpoints and Pseudo mask
 
-The **Checkpoints and Pseudo mask** is accessible for download via the following link:https://drive.google.com/drive/folders/1z9O2FWwUlE29lSgLDj9Af7sv5ZQv6sc_?usp=sharing
+The **Checkpoints and Pseudo mask** are accessible for download via the following link:https://drive.google.com/drive/folders/1z9O2FWwUlE29lSgLDj9Af7sv5ZQv6sc_?usp=sharing
 
 ## Cloning the Repository
 The repository contains submodules, thus please check it out with
@@ -86,7 +86,7 @@ Please refer to the "Grounded-SAM: Detect and Segment Everything with Text Promp
 
 
 ## BibTeX
-Please consider to cite ReferSplat if it helps your research.
+Please consider citing ReferSplat if it helps your research.
 
 ```bibtex
 @inproceedings{ReferSplat,
