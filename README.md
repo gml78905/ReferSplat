@@ -39,7 +39,7 @@ The **Ref-LERF dataset** is accessible for download via the following link: [bai
 ```
 ## Checkpoints and Pseudo mask
 
-The **Checkpoints and Pseudo mask** are accessible for download via the following link:https://drive.google.com/drive/folders/1z9O2FWwUlE29lSgLDj9Af7sv5ZQv6sc_?usp=sharing or https://huggingface.co/FudanCVL/RefSplat
+The **Checkpoints and Pseudo mask** are accessible for download via the following link:[googledrive](https://drive.google.com/drive/folders/1z9O2FWwUlE29lSgLDj9Af7sv5ZQv6sc_?usp=sharing) or [huggingface](https://huggingface.co/FudanCVL/RefSplat)
 
 ## Cloning the Repository
 The repository contains submodules, thus please check it out with
