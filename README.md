@@ -61,6 +61,7 @@ conda env create --file environment.yml
 conda activate refsplat
 ```
 ## Training
+Note: Before training, you need to train original [3DGS](https://github.com/graphdeco-inria/gaussian-splatting) to obtain pretrained Gaussians for RGB rendering.
 ```bash
 python train.py -s <path to ref-lerf dataset> -m <path to output_model>
 <ref-lerf>
