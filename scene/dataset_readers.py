@@ -161,6 +161,13 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
+data_dict={
+    'ramen':[6,24,60,65,81,119,128],
+    'figurines':[83,97,146,179],
+    'teatime':[2,25,43,107,129,140],
+    'waldo':[19,35,67,105,162],
+    
+}
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
@@ -174,12 +181,14 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
+    data_key=path.split('/')[-1]
     # reading_dir_F = "language_feature" if language_feature == None else language_feature
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-    kitchen_test_indices=[19,35,67,105,162]
-    train_cam_infos =[c for idx, c in enumerate(cam_infos) if int(c.image_name.split('_')[1]) not in kitchen_test_indices ]
-    test_cam_infos = [c for idx, c in enumerate(cam_infos) if int(c.image_name.split('_')[1]) in kitchen_test_indices]
+    test_indices=data_dict[data_key]
+    #import pdb; pdb.set_trace()
+    train_cam_infos =[c for idx, c in enumerate(cam_infos) if int(c.image_name.split('_')[1]) not in test_indices ]
+    test_cam_infos = [c for idx, c in enumerate(cam_infos) if int(c.image_name.split('_')[1]) in test_indices]
     nerf_normalization = getNerfppNorm(train_cam_infos)
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
     bin_path = os.path.join(path, "sparse/0/points3D.bin")
