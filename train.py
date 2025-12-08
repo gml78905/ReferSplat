@@ -112,10 +112,12 @@ if __name__ == "__main__":
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--start_checkpoint", type=str, default = 'output/teatime/chkpnt30000.pth')
+    parser.add_argument("--start_checkpoint", type=str, default = '/ws/data/Ref-lerf/train/ramen/chkpnt30000.pth')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     print(args)
+    # Create output folder if it does not exist
+    os.makedirs(args.model_path, exist_ok=True)
     args.model_path = args.model_path
     print("Optimizing " + args.model_path)
 

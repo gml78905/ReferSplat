@@ -50,6 +50,8 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        if not hasattr(g, 'language_features_name'):
+            g.language_features_name = self._language_features_name
         g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 
@@ -94,17 +96,23 @@ def get_combined_args(parser : ArgumentParser):
     
     args_cmdline = parser.parse_args(cmdlne_string)
 
+    # Try to read a cfg_args file from the provided model path (if present).
     try:
-        
-        cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
-        print("Looking for config file in", cfgfilepath)
-        with open(cfgfilepath) as cfg_file:
-            print("Config file found: {}".format(cfgfilepath))
-            
-            cfgfile_string = cfg_file.read()
-    except TypeError:
-        print("Config file not found at")
-        pass
+        if hasattr(args_cmdline, 'model_path') and args_cmdline.model_path:
+            cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
+            print("Looking for config file in", cfgfilepath)
+            try:
+                with open(cfgfilepath) as cfg_file:
+                    print("Config file found: {}".format(cfgfilepath))
+                    cfgfile_string = cfg_file.read()
+            except FileNotFoundError:
+                # No cfg file found; continue with empty Namespace
+                print("Config file not found at", cfgfilepath)
+        else:
+            print("No model_path in command-line args; skipping cfg_args lookup")
+    except Exception as e:
+        # Any unexpected error should not block argument parsing; fall back to empty
+        print("Error while looking for cfg_args:", e)
     
     args_cfgfile = eval(cfgfile_string)
     
