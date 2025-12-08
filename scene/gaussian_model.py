@@ -51,7 +51,7 @@ class GaussianModel:
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
         self.mlp2=MLP2(16,128).to("cuda")
-        self.mlp3=MLP3(14,128).to("cuda")  # 14 = xyz(3) + opacity(1) + scaling(3) + rotation(4) + features_dc(3)
+        self.mlp3=MLP3(3,128).to("cuda")  # 14 = xyz(3) + opacity(1) + scaling(3) + rotation(4) + features_dc(3)
         self.mlp1=MLP1(1024,128).to("cuda")
 
         
