@@ -50,6 +50,9 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        # language_features_name이 없으면 기본값 사용
+        if not hasattr(g, 'language_features_name') or g.language_features_name is None:
+            g.language_features_name = self._language_features_name
         g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 

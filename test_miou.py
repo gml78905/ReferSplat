@@ -34,8 +34,21 @@ def calculate_iou_for_directory(render_dir, gt_dir):
     mean_iou = np.mean(iou_list) if iou_list else 0.0
     return mean_iou
 
-render_dir=''
-gt_dir=''
-average_iou = calculate_iou_for_directory(render_dir, gt_dir)
-print(f'iteration {i} Average IoU: {average_iou}')
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Calculate mIoU for rendered results")
+    parser.add_argument("--model_path", type=str, required=True, help="Model path")
+    parser.add_argument("--name", type=str, required=True, help="Experiment name")
+    parser.add_argument("--iteration", type=int, required=True, help="Iteration number")
+    args = parser.parse_args()
+    
+    # 렌더링 결과 경로 구성
+    render_dir = os.path.join(args.model_path, "render", args.name, f"ours_{args.iteration}", "renders")
+    gt_dir = os.path.join(args.model_path, "render", args.name, f"ours_{args.iteration}", "gt")
+    
+    print(f"Render directory: {render_dir}")
+    print(f"GT directory: {gt_dir}")
+    
+    average_iou = calculate_iou_for_directory(render_dir, gt_dir)
+    print(f'Iteration {args.iteration} Average IoU: {average_iou:.4f}')
 

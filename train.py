@@ -20,7 +20,7 @@ except ImportError:
     TENSORBOARD_FOUND = False
     
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from,epoch):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, epoch, name):
     
     first_iter = 0
     gaussians = GaussianModel(dataset.sh_degree)
@@ -94,7 +94,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         progress_bar.update(10)
                         total_loss.append(ema_loss_for_log)
         
-        torch.save((gaussians.capture(opt.include_feature), iteration), scene.model_path + "/chkpnt_cbasetea251" + str(epoch) + ".pth")
+        # 체크포인트 저장 경로: {model_path}/checkpoints/stage2/{name}/chkpnt_{epoch}.pth
+        checkpoint_dir = os.path.join(scene.model_path, "checkpoints", "stage2", name)
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(checkpoint_dir, f"chkpnt_{epoch}.pth")
+        torch.save((gaussians.capture(opt.include_feature), iteration), checkpoint_path)
+        print(f"Checkpoint saved to: {checkpoint_path}")
     progress_bar.close()
     
 if __name__ == "__main__":
@@ -112,16 +117,23 @@ if __name__ == "__main__":
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--start_checkpoint", type=str, default = 'output/teatime/chkpnt30000.pth')
+    parser.add_argument("--start_checkpoint", type=str, default=None, help="Path to start checkpoint. Default: {model_path}/checkpoints/stage1/chkpnt30000.pth")
+    parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint saving")
     args = parser.parse_args(sys.argv[1:])
+    
+    # --start_checkpoint가 지정되지 않았으면 기본값 설정: {model_path}/checkpoints/stage1/chkpnt30000.pth
+    if args.start_checkpoint is None:
+        args.start_checkpoint = os.path.join(args.model_path, "checkpoints", "stage1", "chkpnt30000.pth")
+    
     args.save_iterations.append(args.iterations)
     print(args)
     args.model_path = args.model_path
     print("Optimizing " + args.model_path)
+    print("Start checkpoint: " + args.start_checkpoint)
 
     safe_state(args.quiet)
     epoch_num=5
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,epoch_num)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, args.name)
 
     print("\nTraining complete.")

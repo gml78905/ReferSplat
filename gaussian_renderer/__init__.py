@@ -82,7 +82,17 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
 
-    p=pc.mlp3(pc.get_xyz)
+    # Combine all Gaussian information: xyz(3) + opacity(1) + scaling(3) + rotation(4) + features_dc(3) = 14 dims
+    xyz = pc.get_xyz  # (N, 3)
+    opacity = pc.get_opacity.squeeze(-1)  # (N, 1) -> (N,)
+    scaling = pc.get_scaling  # (N, 3)
+    rotation = pc.get_rotation  # (N, 4)
+    features_dc = pc._features_dc.squeeze(1)  # (N, 1, 3) -> (N, 3)
+    
+    # Concatenate all Gaussian properties
+    gaussian_features = torch.cat([xyz, opacity.unsqueeze(-1), scaling, rotation, features_dc], dim=-1)  # (N, 14)
+    
+    p=pc.mlp3(gaussian_features)
     p=F.normalize(p,dim=-1)
     x=pc.mlp2(pc._language_feature)
     g=pc.cross_attention(x,p,t_token)

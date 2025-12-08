@@ -64,11 +64,13 @@ def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, ski
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         
+        iteration = args.iteration
+        
         # if not skip_train:
-        #      render_set(dataset.model_path, dataset.source_path, "trainb", iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
+        #      render_set(dataset.model_path, dataset.source_path, "render_train", iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
 
         if not skip_test:
-             render_set(dataset.model_path, dataset.source_path, "testccc", iteration, scene.getTestCameras(), gaussians, pipeline, background, args)
+             render_set(dataset.model_path, dataset.source_path, os.path.join("render", args.name), iteration, scene.getTestCameras(), gaussians, pipeline, background, args)
 
 if __name__ == "__main__":
     random.seed(0)
@@ -86,8 +88,13 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--include_feature", action="store_true")
+    parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint loading")
     args = get_combined_args(parser)
     args.include_feature=True
-    args.iteration=5
-    model_path='output/ramen/ramen.pth'
+    
+    # 체크포인트 경로 생성: {model_path}/checkpoints/stage2/{name}/chkpnt_{iteration}.pth
+    if args.iteration == -1:
+        args.iteration = 4  # 기본값
+    model_path = os.path.join("checkpoints", "stage2", args.name, f"chkpnt_{args.iteration}.pth")
+    
     render_sets(model.extract(args), model_path, pipeline.extract(args), args.skip_train, args.skip_test, args)
