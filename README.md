@@ -77,8 +77,28 @@ python train.py -s <path to ref-lerf dataset> -m <path to output_model>
 
 ## Render
 ```bash
-python render.py -m <path to output_model>
-```
+# Basic (choose latest .pth inside the model output directory):
+python render.py -m /ws/data/Ref-lerf/ramen_gs
+
+# Specify a checkpoint file (filename inside model dir) or absolute path:
+python render.py -m /ws/data/Ref-lerf/ramen_gs -c chkpnt_30000.pth
+python render.py -c /ws/data/Ref-lerf/ramen_gs/chkpnt_30000.pth
+
+# Include language-feature visualization (binary mask output):
+python render.py -m /ws/data/Ref-lerf/ramen_gs --include_feature
+
+# Skip test set rendering (if needed):
+python render.py -m /ws/data/Ref-lerf/ramen_gs --skip_test
+
+# Notes:
+# - If you don't pass -c/--checkpoint, the script will pick the newest *.pth in the
+#   directory passed to -m/--model_path. If no .pth is found, pass --checkpoint with
+#   the exact file path.
+# - The script will create output directories under the model path like:
+#   <model_path>/<scene_name>/ours_<iteration>/renders (PNGs) and renders_npy (npy)
+# - If --iteration is not provided, the script will try to infer it from the
+#   checkpoint filename (numbers in the filename). You can also override with
+#   --iteration <N>.
 
 ## Get pseudo mask
 ```bash
