@@ -3,14 +3,14 @@
 # ReferSplat Docker 실행 스크립트
 # 사용법: ./run_docker.sh [GPU번호] [명령어]
 # 예시: ./run_docker.sh 0 python train.py ...
-#       ./run_docker.sh 1 bash
-#       ./run_docker.sh python train.py ...  (기본값: GPU 0)
+#      ./run_docker.sh 1 bash
+#      ./run_docker.sh python train.py ...   (기본값: GPU 0)
 
 set -e
 
 # 기본 설정
 IMAGE_NAME="wanheekim/refersplat:latest"
-CONTAINER_NAME="refersplat"
+# CONTAINER_NAME은 이제 GPU 번호를 포함하여 고유하게 설정됨
 WORK_DIR="/ws/external"
 
 # 현재 스크립트가 있는 디렉토리의 상위 디렉토리 (ReferSplat 프로젝트 루트)
@@ -35,6 +35,14 @@ else
     COMMAND_ARGS=("$@")
 fi
 
+# =========================================================
+# ⭐ 수정된 부분: CONTAINER_NAME을 GPU 번호를 기반으로 설정
+# 예: GPU_NUM=0 -> CONTAINER_NAME=refersplat_0
+# 예: GPU_NUM=0,1 -> CONTAINER_NAME=refersplat_0_1
+CONTAINER_NAME="refersplat_${GPU_NUM//,/_}"
+# =========================================================
+
+
 # GPU 사용 여부 확인 및 설정
 if command -v nvidia-smi &> /dev/null; then
     GPU_FLAG="--gpus device=${GPU_NUM}"
@@ -44,12 +52,14 @@ else
     echo "No GPU detected. Running in CPU mode"
 fi
 
-# 기존 컨테이너가 실행 중이면 중지 및 제거
+# =========================================================
+# ⭐ 수정된 부분: 이제 현재 스크립트가 실행하려는 고유한 컨테이너만 중지/제거 시도
 if [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; then
-    echo "Stopping existing container..."
+    echo "Stopping existing container named: ${CONTAINER_NAME}..."
     docker stop ${CONTAINER_NAME} > /dev/null 2>&1 || true
     docker rm ${CONTAINER_NAME} > /dev/null 2>&1 || true
 fi
+# =========================================================
 
 # 도커 이미지 pull (최신 버전 확인)
 echo "Pulling Docker image: ${IMAGE_NAME}"

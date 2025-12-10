@@ -117,12 +117,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 30_000])
-<<<<<<< HEAD
     parser.add_argument("--start_checkpoint", type=str, default=None, help="Path to start checkpoint. Default: {model_path}/checkpoints/stage1/chkpnt30000.pth")
     parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint saving")
-=======
-    parser.add_argument("--start_checkpoint", type=str, default = '/ws/data/Ref-lerf/train/ramen/chkpnt30000.pth')
->>>>>>> 3f1fdad8ef88d036e4d0437c2bc9ef95965a5fae
     args = parser.parse_args(sys.argv[1:])
     
     # --start_checkpoint가 지정되지 않았으면 기본값 설정: {model_path}/checkpoints/stage1/chkpnt30000.pth
