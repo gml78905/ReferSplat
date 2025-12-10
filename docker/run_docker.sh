@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # 데이터셋 경로
-DATASET_DIR="/media/gml78905/T7/dataset"
+DATASET_DIR="/media/TrainDataset/wh"
 DATASET_MOUNT="/ws/data"
 
 # GPU 번호 파싱 (첫 번째 인자가 숫자 또는 쉼표로 구분된 숫자인지 확인)
