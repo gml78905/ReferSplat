@@ -50,7 +50,7 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
-        g.lf_path = os.path.join(g.source_path, g.language_features_name)
+        # g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 
 class PipelineParams(ParamGroup):
