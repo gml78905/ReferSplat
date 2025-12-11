@@ -10,8 +10,10 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
+    python3 \
     python3-pip \
     python3-dev \
+    python3-venv \
     git \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -19,8 +21,16 @@ RUN apt-get update && apt-get install -y \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# Python 버전 확인 (3.8 이상이어야 함)
+RUN python3 --version
+
+# 시스템 Python이 conda보다 우선하도록 PATH 설정
 # python3를 python으로 사용하기 위한 심볼릭 링크 (편의상)
-RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN ln -sf /usr/bin/python3 /usr/bin/python && \
+    python --version
+
+# PATH에서 시스템 Python이 conda보다 우선하도록 설정
+ENV PATH="/usr/bin:${PATH}"
 
 # 4. Pip 업그레이드
 RUN pip3 install --upgrade pip
