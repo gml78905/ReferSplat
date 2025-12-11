@@ -51,7 +51,7 @@ class GaussianModel:
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
         self.mlp2=MLP2(16,128).to("cuda")
-        self.mlp3=MLP3(13,128).to("cuda")  # 13 = xyz(3) + scaling(3) + rotation(4) + features_dc(3)
+        self.mlp3=MLP3(12,128).to("cuda")  # 12 = xyz(3) + covariance_upper(6) + features_dc(3)
         self.mlp1=MLP1(1024,128).to("cuda")
 
         
@@ -215,16 +215,48 @@ class GaussianModel:
 
     def get_full_geometry_features(self):
         """
-        Concatenate geometry features: xyz (3), scaling (3), rotation (4), features_dc (3)
-        Returns tensor of shape (N, 13)
+        Concatenate geometry features: xyz (3), covariance upper triangle (6), features_dc (3)
+        Total Dimension: 3 + 6 + 3 = 12
+        Covariance matrix is computed from scaling and rotation: L @ L^T where L = S * R
+        Returns tensor of shape (N, 12)
         """
         xyz = self._xyz  # (N, 3)
-        scaling = self._scaling  # (N, 3)
-        rotation = self._rotation  # (N, 4)
-        features_dc = self._features_dc.squeeze(1)  # (N, 1, 3) -> (N, 3) after squeeze
+        features_dc = self._features_dc.reshape(-1, 3)  # (N, 3)
         
-        # Concatenate all features: 3 + 3 + 4 + 3 = 13
-        geometry_features = torch.cat([xyz, scaling, rotation, features_dc], dim=1)  # (N, 13)
+        # 1. Scaling & Rotation 가져오기
+        scaling = self.get_scaling    # (N, 3)
+        rotation = self.get_rotation  # (N, 4)
+        
+        # 2. Covariance Matrix 계산 (3x3)
+        # L = R * S (Rotation * Scaling)
+        from utils.general_utils import build_scaling_rotation
+        L = build_scaling_rotation(scaling, rotation)  # (N, 3, 3)
+        
+        # Sigma = L * L^T = R S S^T R^T
+        covariance = L @ L.transpose(1, 2)  # (N, 3, 3)
+        
+        # 3. Extract Upper Triangle (6 elements)
+        # 공분산 행렬은 대칭이므로 (0,1)==(1,0) 입니다. 
+        # 따라서 상삼각 요소 6개만 뽑으면 모든 정보를 담게 됩니다.
+        # 순서: xx, xy, xz, yy, yz, zz
+        
+        cov_xx = covariance[:, 0, 0]
+        cov_xy = covariance[:, 0, 1]
+        cov_xz = covariance[:, 0, 2]
+        cov_yy = covariance[:, 1, 1]
+        cov_yz = covariance[:, 1, 2]
+        cov_zz = covariance[:, 2, 2]
+        
+        # (N, 6) 형태로 쌓기
+        covariance_upper = torch.stack([
+            cov_xx, cov_xy, cov_xz, 
+            cov_yy, cov_yz, 
+            cov_zz
+        ], dim=-1)
+        
+        # 4. Concat (3 + 6 + 3 = 12)
+        geometry_features = torch.cat([xyz, covariance_upper, features_dc], dim=1)
+        
         return geometry_features
 
     def oneupSHdegree(self):

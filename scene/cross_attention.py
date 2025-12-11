@@ -68,7 +68,7 @@ class MLP2(nn.Module):
         return x 
     
 class MLP3(nn.Module):
-    def __init__(self, in_dim=13, out_dim=128):
+    def __init__(self, in_dim=12, out_dim=128):
         super(MLP3, self).__init__()
         self.fc1 = nn.Linear(in_dim, 32)
         self.fc2 = nn.Linear(32 ,64)
