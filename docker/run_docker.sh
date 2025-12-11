@@ -9,7 +9,18 @@
 set -e
 
 # 기본 설정
-IMAGE_NAME="wanheekim/refersplat:latest"
+# 로컬 이미지를 먼저 확인하고, 없으면 원격 이미지 사용
+LOCAL_IMAGE="refersplat:latest"
+REMOTE_IMAGE="wanheekim/refersplat:latest"
+
+if docker image inspect "${LOCAL_IMAGE}" &> /dev/null; then
+    IMAGE_NAME="${LOCAL_IMAGE}"
+    echo "Using local Docker image: ${IMAGE_NAME}"
+else
+    IMAGE_NAME="${REMOTE_IMAGE}"
+    echo "Local image not found. Will use remote image: ${IMAGE_NAME}"
+fi
+
 # CONTAINER_NAME은 이제 GPU 번호를 포함하여 고유하게 설정됨
 WORK_DIR="/ws/external"
 
@@ -61,9 +72,13 @@ if [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; then
 fi
 # =========================================================
 
-# 도커 이미지 pull (최신 버전 확인)
-echo "Pulling Docker image: ${IMAGE_NAME}"
-docker pull ${IMAGE_NAME}
+# 도커 이미지 pull (로컬 이미지가 아닌 경우에만)
+if [ "${IMAGE_NAME}" = "${REMOTE_IMAGE}" ]; then
+    echo "Pulling Docker image: ${IMAGE_NAME}"
+    docker pull ${IMAGE_NAME}
+else
+    echo "Using local image. Skipping pull."
+fi
 
 # 도커 컨테이너 실행
 echo "Starting Docker container: ${CONTAINER_NAME}"

@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     curl \
     tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 --version | grep -E "Python 3\.[89]|Python 3\.1[0-9]" || (echo "ERROR: Python 3.8+ required but found: $(python3 --version)" && exit 1)
 
 # Python 버전 확인 (3.8 이상이어야 함)
 RUN python3 --version
@@ -35,16 +36,20 @@ ENV PATH="/usr/bin:${PATH}"
 # 4. Pip 업그레이드
 RUN pip3 install --upgrade pip
 
-# 5. PyTorch 1.12.1 수동 설치 (기존 베이스 이미지에 있던 것 대체)
+# 5. Python 3.8과 호환되는 typing-extensions 버전 먼저 설치
+# (PyTorch 설치 시 최신 버전이 설치되어 Python 3.9+ 요구로 인한 에러 방지)
+RUN pip install "typing-extensions<5.0"
+
+# 6. PyTorch 1.12.1 수동 설치 (기존 베이스 이미지에 있던 것 대체)
 # CUDA 11.3 버전에 맞는 PyTorch 설치
 RUN pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
 
 # ---------------- 아래는 기존과 동일 ----------------
 
-# 6. 의존성 패키지 설치 (jaxtyping, typeguard 등)
+# 7. 의존성 패키지 설치 (jaxtyping, typeguard 등)
 RUN pip install typeguard==4.0.0 jaxtyping==0.2.12
 
-# Rust 및 기타 패키지 설치
+# 8. Rust 및 기타 패키지 설치
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
     export PATH="/root/.cargo/bin:${PATH}" && \
     pip install maturin==0.14.13 && \
@@ -57,12 +62,12 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
         tensorboard \
         matplotlib
 
-# 7. 로컬 submodules 복사
+# 9. 로컬 submodules 복사
 COPY submodules /app/submodules
 
 ENV TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6"
 
-# 8. 서브모듈 설치
+# 10. 서브모듈 설치
 RUN pip install /app/submodules/segment-anything-langsplat
 RUN pip install /app/submodules/langsplat-rasterization
 RUN pip install /app/submodules/simple-knn

@@ -14,25 +14,6 @@
         }
         ,
         {
-            "name": "Python: Render (ramen_gs)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/render.py",
-            "console": "integratedTerminal",
-            "args": [
-                "-m",
-                "/ws/data/Ref-lerf/train/ramen",
-                "-c",
-                "/ws/data/Ref-lerf/ramen.pth",
-                "--include_feature"
-            ],
-            "cwd": "${workspaceFolder}",
-            "env": {
-                "PYTHONUNBUFFERED": "1"
-            },
-            "justMyCode": false
-        },
-        {
             "name": "Python: Train (ramen_gs)",
             "type": "debugpy",
             "request": "launch",
@@ -43,8 +24,8 @@
                 "/ws/data/Ref-lerf/ramen",
                 "-m",
                 "/ws/data/Ref-lerf/train/ramen",
-                "--start_checkpoint",
-                "/ws/data/Ref-lerf/ramen_gs/point_cloud/iteration_30000/point_cloud.ply"
+                "--name",
+                "test"
             ],
             "cwd": "${workspaceFolder}",
             "env": {
@@ -53,16 +34,198 @@
             "justMyCode": false
         },
         {
-            "name": "Python: Test mIoU (ramen_gs)",
+            "name": "Python: Render (ramen_gs) - iteration 0",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-m",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "0"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Render (ramen_gs) - iteration 1",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-m",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "1"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Render (ramen_gs) - iteration 2",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-m",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "2"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Render (ramen_gs) - iteration 3",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-m",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "3"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Render (ramen_gs) - iteration 4",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-m",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "4"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Test mIoU (ramen_gs) - iteration 0",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/test_miou.py",
             "console": "integratedTerminal",
             "args": [
-                "--render_dir",
-                "/ws/data/Ref-lerf/train/ramen/render/ours_-1/renders",
-                "--gt_dir",
-                "/ws/data/Ref-lerf/train/ramen/render/ours_-1/gt"
+                "--model_path",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "0"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Test mIoU (ramen_gs) - iteration 1",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_miou.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--model_path",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "1"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Test mIoU (ramen_gs) - iteration 2",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_miou.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--model_path",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "2"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Test mIoU (ramen_gs) - iteration 3",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_miou.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--model_path",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "3"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Test mIoU (ramen_gs) - iteration 4",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_miou.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--model_path",
+                "/ws/data/Ref-lerf/train/ramen",
+                "--name",
+                "origin_test",
+                "--iteration",
+                "4"
             ],
             "cwd": "${workspaceFolder}",
             "env": {
