@@ -101,7 +101,8 @@ else
         -e PYTHONUNBUFFERED=1 \
         -e CUDA_VISIBLE_DEVICES=${GPU_NUM} \
         ${IMAGE_NAME} \
-        "${COMMAND_ARGS[@]}"
+        "${COMMAND_ARGS[@]}" \
+         /bin/bash -c "umask 000 && exec bash"
 fi
 
 echo "Container stopped."
