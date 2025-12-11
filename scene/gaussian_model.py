@@ -51,7 +51,7 @@ class GaussianModel:
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
         self.mlp2=MLP2(16,128).to("cuda")
-        self.mlp3=MLP3(3,128).to("cuda")
+        self.mlp3=MLP3(13,128).to("cuda")  # 13 = xyz(3) + scaling(3) + rotation(4) + features_dc(3)
         self.mlp1=MLP1(1024,128).to("cuda")
 
         
@@ -212,6 +212,20 @@ class GaussianModel:
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+
+    def get_full_geometry_features(self):
+        """
+        Concatenate geometry features: xyz (3), scaling (3), rotation (4), features_dc (3)
+        Returns tensor of shape (N, 13)
+        """
+        xyz = self._xyz  # (N, 3)
+        scaling = self._scaling  # (N, 3)
+        rotation = self._rotation  # (N, 4)
+        features_dc = self._features_dc.squeeze(1)  # (N, 1, 3) -> (N, 3) after squeeze
+        
+        # Concatenate all features: 3 + 3 + 4 + 3 = 13
+        geometry_features = torch.cat([xyz, scaling, rotation, features_dc], dim=1)  # (N, 13)
+        return geometry_features
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
