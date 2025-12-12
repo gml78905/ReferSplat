@@ -154,4 +154,63 @@ class MLP_position_feature(nn.Module):
         x = self.fc2(x)
         return x
 
+class NeighborSelfAttention(nn.Module):
+    """
+    Self-attention을 사용하여 이웃 features를 aggregate합니다.
+    각 가우시안의 k개 이웃들 간의 attention을 계산하여 가중치를 학습합니다.
+    """
+    def __init__(self, feature_dim=128, num_heads=1):
+        super(NeighborSelfAttention, self).__init__()
+        self.feature_dim = feature_dim
+        self.num_heads = num_heads
+        self.head_dim = feature_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        
+        # Query, Key, Value projections
+        self.q_linear = nn.Linear(feature_dim, feature_dim)
+        self.k_linear = nn.Linear(feature_dim, feature_dim)
+        self.v_linear = nn.Linear(feature_dim, feature_dim)
+        
+        # Output projection
+        self.out_linear = nn.Linear(feature_dim, feature_dim)
+        self.norm = nn.LayerNorm(feature_dim)
+        
+    def forward(self, neighbor_features):
+        """
+        Args:
+            neighbor_features: (N, k, feature_dim) 각 가우시안의 k개 이웃 features
+        
+        Returns:
+            aggregated: (N, feature_dim) self-attention으로 aggregate된 feature
+        """
+        N, k, d = neighbor_features.shape
+        residual = neighbor_features.mean(dim=1, keepdim=True)  # (N, 1, d) - mean pooling을 residual로 사용
+        
+        # Query, Key, Value 생성
+        Q = self.q_linear(neighbor_features)  # (N, k, d)
+        K = self.k_linear(neighbor_features)  # (N, k, d)
+        V = self.v_linear(neighbor_features)  # (N, k, d)
+        
+        # Multi-head attention (단순화를 위해 num_heads=1로 가정)
+        # Attention scores 계산
+        attention_scores = torch.bmm(Q, K.transpose(1, 2)) * self.scale  # (N, k, k)
+        attention_weights = F.softmax(attention_scores, dim=-1)  # (N, k, k)
+        
+        # Weighted sum
+        attended = torch.bmm(attention_weights, V)  # (N, k, d)
+        
+        # Aggregate: 각 가우시안의 k개 이웃을 평균 (또는 다른 방식)
+        aggregated = attended.mean(dim=1)  # (N, d)
+        
+        # Output projection
+        output = self.out_linear(aggregated)  # (N, d)
+        
+        # Residual connection (mean pooling 결과와 더하기)
+        output = output + residual.squeeze(1)  # (N, d)
+        
+        # Layer normalization
+        output = self.norm(output)  # (N, d)
+        
+        return output
+
 

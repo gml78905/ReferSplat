@@ -42,14 +42,16 @@ def get_knn_neighbors(xyz, k=8):
     # 4. 자기 자신 제외 후 GPU로 복귀
     return torch.from_numpy(indices[:, 1:]).cuda(), torch.from_numpy(distances[:, 1:]).cuda()
 
-def aggregate_neighbor_features(geometry_features, neighbor_indices, aggregation='mean'):
+def aggregate_neighbor_features(geometry_features, neighbor_indices, pc, aggregation='self_attention'):
     """
     주변 가우시안의 geometry features를 aggregate합니다.
+    self-attention을 사용하여 학습 가능한 가중치로 aggregate합니다.
     
     Args:
         geometry_features: (N, 128) 각 가우시안의 geometry features
         neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스
-        aggregation: 'mean', 'max', 'sum' 중 하나
+        pc: GaussianModel 인스턴스 (self-attention 모듈 접근용)
+        aggregation: 'self_attention', 'mean', 'max', 'sum' 중 하나
     
     Returns:
         neighbor_features: (N, 128) 주변 가우시안의 aggregate된 features
@@ -58,7 +60,10 @@ def aggregate_neighbor_features(geometry_features, neighbor_indices, aggregation
     neighbor_features = geometry_features[neighbor_indices]  # (N, k, 128)
     
     # Aggregate
-    if aggregation == 'mean':
+    if aggregation == 'self_attention':
+        # Self-attention을 사용하여 학습 가능한 가중치로 aggregate
+        aggregated = pc.neighbor_self_attention(neighbor_features)  # (N, 128)
+    elif aggregation == 'mean':
         aggregated = torch.mean(neighbor_features, dim=1)  # (N, 128)
     elif aggregation == 'max':
         aggregated, _ = torch.max(neighbor_features, dim=1)  # (N, 128)
@@ -150,8 +155,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         neighbor_indices = pc._neighbor_indices  # 캐시된 결과 사용
     
-    # 주변 가우시안의 features를 aggregate
-    neighbor_features = aggregate_neighbor_features(p, neighbor_indices, aggregation='mean')  # (N, 128)
+    # 주변 가우시안의 features를 aggregate (self-attention 사용)
+    neighbor_features = aggregate_neighbor_features(p, neighbor_indices, pc, aggregation='self_attention')  # (N, 128)
     
     # 원래 feature와 주변 feature를 결합 (concatenate 또는 add)
     # 방법 1: Concatenate (256차원) 후 128차원으로 projection

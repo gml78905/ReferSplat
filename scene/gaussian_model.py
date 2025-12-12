@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,MLP_xyz,MLP_cov,MLP_dc,MLP_geometry_fusion,MLP_attribute_features,MLP_position_feature  
+from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,MLP_xyz,MLP_cov,MLP_dc,MLP_geometry_fusion,MLP_attribute_features,MLP_position_feature,NeighborSelfAttention  
 
                        
 class GaussianModel:
@@ -81,6 +81,7 @@ class GaussianModel:
 
         self.p_proj = nn.Linear(256, 128).to("cuda")  # 256차원을 128차원으로 projection
         self.cross_attention=CrossAttention(dim=128, num_heads=1).to("cuda")  # 128차원으로 변경
+        self.neighbor_self_attention = NeighborSelfAttention(feature_dim=128, num_heads=1).to("cuda")  # 이웃 features self-attention
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
@@ -109,6 +110,7 @@ class GaussianModel:
                 self.mlp3.state_dict(),
                 self.p_proj.state_dict(),
                 self.cross_attention.state_dict(),
+                self.neighbor_self_attention.state_dict(),
                 self.mlp_xyz.state_dict(),
                 self.mlp_cov.state_dict(),
                 self.mlp_dc.state_dict(),
@@ -133,8 +135,49 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 24:
-            # New checkpoint format with attribute_features and position_feature MLPs
+        if len(model_args) == 25:
+            # New checkpoint format with neighbor_self_attention
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            #self.text_language_feature,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            p_proj_params,
+            cross_attention_params,
+            neighbor_self_attention_params,
+            mlp_xyz_params,
+            mlp_cov_params,
+            mlp_dc_params,
+            mlp_geometry_fusion_params,
+            mlp_attribute_features_params,
+            mlp_position_feature_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.p_proj.load_state_dict(p_proj_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.neighbor_self_attention.load_state_dict(neighbor_self_attention_params)
+            self.mlp_xyz.load_state_dict(mlp_xyz_params)
+            self.mlp_cov.load_state_dict(mlp_cov_params)
+            self.mlp_dc.load_state_dict(mlp_dc_params)
+            self.mlp_geometry_fusion.load_state_dict(mlp_geometry_fusion_params)
+            self.mlp_attribute_features.load_state_dict(mlp_attribute_features_params)
+            self.mlp_position_feature.load_state_dict(mlp_position_feature_params)
+        elif len(model_args) == 24:
+            # Checkpoint format without neighbor_self_attention (backward compatibility)
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -166,6 +209,7 @@ class GaussianModel:
             self.mlp3.load_state_dict(mlp3_params)
             self.p_proj.load_state_dict(p_proj_params)
             self.cross_attention.load_state_dict(cross_attention_params)
+            # neighbor_self_attention will use default initialization
             self.mlp_xyz.load_state_dict(mlp_xyz_params)
             self.mlp_cov.load_state_dict(mlp_cov_params)
             self.mlp_dc.load_state_dict(mlp_dc_params)
@@ -415,6 +459,7 @@ class GaussianModel:
                  {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
                  {'params': self.p_proj.parameters(), 'lr': training_args.mlp_lr, "name": "p_proj"},
                  {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
+                 {'params': self.neighbor_self_attention.parameters(), 'lr': training_args.mlp_lr, "name": "neighbor_self_attention"},
                  {'params': self.mlp_xyz.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_xyz"},
                  {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_cov"},
                  {'params': self.mlp_dc.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_dc"},
