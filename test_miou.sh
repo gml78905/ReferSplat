@@ -1,11 +1,14 @@
 #!/bin/bash
-python test_miou.py --model_path /ws/data/Ref-lerf/train/ramen --name origin_test --iteration 0
+MODEL_PATH="/ws/data/Ref-lerf/train/ramen"
 
-python test_miou.py --model_path /ws/data/Ref-lerf/train/ramen --name origin_test --iteration 1
+# 첫 번째 인자: name (기본값 "test")
+# 두 번째 인자: num_runs (기본값 3)
+NAME=${1:-test}
+NUM_RUNS=${2:-3}
 
-python test_miou.py --model_path /ws/data/Ref-lerf/train/ramen --name origin_test --iteration 2
-
-python test_miou.py --model_path /ws/data/Ref-lerf/train/ramen --name origin_test --iteration 3
-
-python test_miou.py --model_path /ws/data/Ref-lerf/train/ramen --name origin_test --iteration 4
-
+for run_number in $(seq 1 $NUM_RUNS); do
+    echo "Processing run $run_number/$NUM_RUNS"
+    for iteration in {0..4}; do
+        python test_miou.py --model_path "$MODEL_PATH" --name "$NAME" --run_number "$run_number" --iteration "$iteration"
+    done
+done

@@ -154,7 +154,9 @@ def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, ski
         #      render_set(dataset.model_path, dataset.source_path, "render_train", iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
 
         if not skip_test:
-             render_set(dataset.model_path, dataset.source_path, os.path.join("render", args.name), iteration, scene.getTestCameras(), gaussians, pipeline, background, args)
+             # 렌더링 결과 경로: render/{name}/{run_number}/...
+             render_name = os.path.join("render", args.name, str(args.run_number))
+             render_set(dataset.model_path, dataset.source_path, render_name, iteration, scene.getTestCameras(), gaussians, pipeline, background, args)
 
 if __name__ == "__main__":
     random.seed(0)
@@ -173,12 +175,13 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--include_feature", action="store_true")
     parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint loading")
+    parser.add_argument("--run_number", type=int, default=1, help="Run number (for multi-run training). Default: 1")
     args = get_combined_args(parser)
     args.include_feature=True
     
-    # 체크포인트 경로 생성: {model_path}/checkpoints/stage2/{name}/chkpnt_{iteration}.pth
+    # 체크포인트 경로 생성: {model_path}/checkpoints/stage2/{name}/{run_number}/chkpnt_{iteration}.pth
     if args.iteration == -1:
         args.iteration = 4  # 기본값
-    model_path = os.path.join("checkpoints", "stage2", args.name, f"chkpnt_{args.iteration}.pth")
+    model_path = os.path.join("checkpoints", "stage2", args.name, str(args.run_number), f"chkpnt_{args.iteration}.pth")
     
     render_sets(model.extract(args), model_path, pipeline.extract(args), args.skip_train, args.skip_test, args)
