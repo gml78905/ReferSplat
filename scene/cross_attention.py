@@ -130,4 +130,28 @@ class MLP_geometry_fusion(nn.Module):
         x = self.fc2(x)
         return x
 
+class MLP_attribute_features(nn.Module):
+    """MLP to create attribute_features from cov_embed and dc_embed: 64 -> 128"""
+    def __init__(self, in_dim=64, out_dim=128):  # 32 + 32 = 64
+        super(MLP_attribute_features, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 64)
+        self.fc2 = nn.Linear(64, out_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+class MLP_position_feature(nn.Module):
+    """MLP to create position_feature from xyz_embed: 32 -> 128"""
+    def __init__(self, in_dim=32, out_dim=128):
+        super(MLP_position_feature, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 64)
+        self.fc2 = nn.Linear(64, out_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
 

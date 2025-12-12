@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,MLP_xyz,MLP_cov,MLP_dc,MLP_geometry_fusion  
+from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,MLP_xyz,MLP_cov,MLP_dc,MLP_geometry_fusion,MLP_attribute_features,MLP_position_feature  
 
                        
 class GaussianModel:
@@ -57,7 +57,9 @@ class GaussianModel:
         self.mlp_xyz = MLP_xyz(3, 32).to("cuda")
         self.mlp_cov = MLP_cov(6, 32).to("cuda")
         self.mlp_dc = MLP_dc(3, 32).to("cuda")
-        self.mlp_geometry_fusion = MLP_geometry_fusion(96, 128).to("cuda")  # 3 * 32 = 96
+        self.mlp_geometry_fusion = MLP_geometry_fusion(96, 128).to("cuda")  # 3 * 32 = 96 (for backward compatibility)
+        self.mlp_attribute_features = MLP_attribute_features(64, 128).to("cuda")  # 32 + 32 = 64
+        self.mlp_position_feature = MLP_position_feature(32, 128).to("cuda")  # 32 -> 128
 
         
         self.max_radii2D = torch.empty(0)
@@ -107,6 +109,8 @@ class GaussianModel:
                 self.mlp_cov.state_dict(),
                 self.mlp_dc.state_dict(),
                 self.mlp_geometry_fusion.state_dict(),
+                self.mlp_attribute_features.state_dict(),
+                self.mlp_position_feature.state_dict(),
             )
         else:
             return (
@@ -125,7 +129,44 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 21:
+        if len(model_args) == 23:
+            # New checkpoint format with attribute_features and position_feature MLPs
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            #self.text_language_feature,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            cross_attention_params,
+            mlp_xyz_params,
+            mlp_cov_params,
+            mlp_dc_params,
+            mlp_geometry_fusion_params,
+            mlp_attribute_features_params,
+            mlp_position_feature_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.mlp_xyz.load_state_dict(mlp_xyz_params)
+            self.mlp_cov.load_state_dict(mlp_cov_params)
+            self.mlp_dc.load_state_dict(mlp_dc_params)
+            self.mlp_geometry_fusion.load_state_dict(mlp_geometry_fusion_params)
+            self.mlp_attribute_features.load_state_dict(mlp_attribute_features_params)
+            self.mlp_position_feature.load_state_dict(mlp_position_feature_params)
+        elif len(model_args) == 21:
             # New checkpoint format with individual geometry MLPs
             (self.active_sh_degree, 
             self._xyz, 
@@ -158,6 +199,7 @@ class GaussianModel:
             self.mlp_cov.load_state_dict(mlp_cov_params)
             self.mlp_dc.load_state_dict(mlp_dc_params)
             self.mlp_geometry_fusion.load_state_dict(mlp_geometry_fusion_params)
+            # New MLPs will use default initialization
         elif len(model_args) == 17:
             # Backward compatibility: old checkpoint without individual geometry MLPs
             (self.active_sh_degree, 
@@ -259,11 +301,12 @@ class GaussianModel:
 
     def get_full_geometry_features(self):
         """
-        Process geometry features with individual MLPs and fuse them:
-        1. xyz (3) -> mlp_xyz -> (N, 32)
-        2. covariance_upper (6) -> mlp_cov -> (N, 32)
-        3. features_dc (3) -> mlp_dc -> (N, 32)
-        4. concat -> (N, 96) -> mlp_geometry_fusion -> (N, 128)
+        Process geometry features separately:
+        1. xyz (3) -> mlp_xyz -> xyz_embed (N, 32) -> mlp_position_feature -> position_feature (N, 128)
+        2. covariance_upper (6) -> mlp_cov -> cov_embed (N, 32)
+        3. features_dc (3) -> mlp_dc -> dc_embed (N, 32)
+        4. concat(cov_embed, dc_embed) -> (N, 64) -> mlp_attribute_features -> attribute_features (N, 128)
+        5. position_feature + attribute_features -> (N, 128)
         
         Covariance matrix is computed from scaling and rotation: L @ L^T where L = S * R
         Returns tensor of shape (N, 128)
@@ -307,11 +350,15 @@ class GaussianModel:
         cov_embed = self.mlp_cov(covariance_upper)  # (N, 6) -> (N, 32)
         dc_embed = self.mlp_dc(features_dc)  # (N, 3) -> (N, 32)
         
-        # 5. Concat individual embeddings
-        geometry_embed = torch.cat([xyz_embed, cov_embed, dc_embed], dim=1)  # (N, 96)
+        # 5. Create attribute_features from cov_embed and dc_embed
+        attribute_embed = torch.cat([cov_embed, dc_embed], dim=1)  # (N, 64)
+        attribute_features = self.mlp_attribute_features(attribute_embed)  # (N, 64) -> (N, 128)
         
-        # 6. Final fusion MLP
-        geometry_features = self.mlp_geometry_fusion(geometry_embed)  # (N, 96) -> (N, 128)
+        # 6. Create position_feature from xyz_embed
+        position_feature = self.mlp_position_feature(xyz_embed)  # (N, 32) -> (N, 128)
+        
+        # 7. Add position_feature and attribute_features
+        geometry_features = position_feature + attribute_features  # (N, 128)
         
         return geometry_features
 
@@ -365,6 +412,8 @@ class GaussianModel:
                  {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_cov"},
                  {'params': self.mlp_dc.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_dc"},
                  {'params': self.mlp_geometry_fusion.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_geometry_fusion"},
+                 {'params': self.mlp_attribute_features.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_attribute_features"},
+                 {'params': self.mlp_position_feature.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_position_feature"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)

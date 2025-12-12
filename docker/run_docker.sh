@@ -101,7 +101,7 @@ if [ ${#COMMAND_ARGS[@]} -eq 0 ]; then
         -e PYTHONUNBUFFERED=1 \
         -e CUDA_VISIBLE_DEVICES=${GPU_NUM} \
         ${IMAGE_NAME} \
-        bash
+        /bin/bash -c "umask 000 && exec bash"
 else
     # 제공된 명령어 실행
     docker run -it --rm \
