@@ -82,4 +82,52 @@ class MLP3(nn.Module):
         x = self.fc3(x)
         return x    
 
+class MLP_xyz(nn.Module):
+    """MLP for xyz position features: 3 -> embedding_dim"""
+    def __init__(self, in_dim=3, embedding_dim=32):
+        super(MLP_xyz, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 16)
+        self.fc2 = nn.Linear(16, embedding_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+class MLP_cov(nn.Module):
+    """MLP for covariance upper triangle features: 6 -> embedding_dim"""
+    def __init__(self, in_dim=6, embedding_dim=32):
+        super(MLP_cov, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 16)
+        self.fc2 = nn.Linear(16, embedding_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+class MLP_dc(nn.Module):
+    """MLP for features_dc (color DC): 3 -> embedding_dim"""
+    def __init__(self, in_dim=3, embedding_dim=32):
+        super(MLP_dc, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 16)
+        self.fc2 = nn.Linear(16, embedding_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+class MLP_geometry_fusion(nn.Module):
+    """Final MLP to fuse individual geometry embeddings: 3*embedding_dim -> 128"""
+    def __init__(self, in_dim=96, out_dim=128):  # 3 * 32 = 96
+        super(MLP_geometry_fusion, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 64)
+        self.fc2 = nn.Linear(64, out_dim)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
 

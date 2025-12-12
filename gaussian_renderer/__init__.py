@@ -82,9 +82,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
 
-    # Use full geometry features: position, covariance upper triangle (from scale+rotation), color (DC)
-    geometry_features = pc.get_full_geometry_features()  # (N, 12)
-    p=pc.mlp3(geometry_features)
+    # Use full geometry features: each feature processed by individual MLP, then fused
+    # Returns (N, 128) - already processed through MLPs
+    p = pc.get_full_geometry_features()  # (N, 128)
     p=F.normalize(p,dim=-1)
     x=pc.mlp2(pc._language_feature)
     g=pc.cross_attention(x,p,t_token)
