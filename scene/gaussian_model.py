@@ -366,7 +366,7 @@ class GaussianModel:
         # 7. Add position_feature and attribute_features
         geometry_features = position_feature + attribute_features  # (N, 128)
         
-        return geometry_features
+        return geometry_features, attribute_features
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:

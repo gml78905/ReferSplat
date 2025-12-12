@@ -42,6 +42,43 @@ def get_knn_neighbors(xyz, k=8):
     # 4. 자기 자신 제외 후 GPU로 복귀
     return torch.from_numpy(indices[:, 1:]).cuda(), torch.from_numpy(distances[:, 1:]).cuda()
 
+def select_neighbors_by_feature_similarity(candidate_indices, a_features, k_final=8):
+    """
+    후보 이웃들 중에서 a_features의 유사도로 최종 k개 이웃을 선별합니다.
+    
+    Args:
+        candidate_indices: (N, k_candidates) 1차 KNN으로 뽑은 후보 이웃 인덱스
+        a_features: (N, D) 각 가우시안의 attribute features
+        k_final: 최종 선택할 이웃 개수
+    
+    Returns:
+        final_indices: (N, k_final) 최종 선택된 이웃 인덱스
+    """
+    N, k_candidates = candidate_indices.shape
+    
+    # 각 가우시안의 feature
+    query_features = a_features  # (N, D)
+    
+    # 후보 이웃들의 feature 가져오기
+    candidate_features = a_features[candidate_indices]  # (N, k_candidates, D)
+    
+    # Query feature 정규화
+    query_features_norm = F.normalize(query_features, p=2, dim=1, keepdim=True)  # (N, 1, D)
+    
+    # Candidate features 정규화
+    candidate_features_norm = F.normalize(candidate_features, p=2, dim=2)  # (N, k_candidates, D)
+    
+    # Cosine similarity 계산
+    similarities = torch.bmm(query_features_norm, candidate_features_norm.transpose(1, 2)).squeeze(1)  # (N, k_candidates)
+    
+    # 가장 유사한 k_final개 선택
+    _, topk_indices = torch.topk(similarities, k_final, dim=1)  # (N, k_final)
+    
+    # 후보 인덱스에서 최종 인덱스 선택
+    final_indices = torch.gather(candidate_indices, 1, topk_indices)  # (N, k_final)
+    
+    return final_indices
+
 def aggregate_neighbor_features(geometry_features, neighbor_indices, aggregation='mean'):
     """
     주변 가우시안의 geometry features를 aggregate합니다.
@@ -138,17 +175,23 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Use full geometry features: each feature processed by individual MLP, then fused
     # Returns (N, 128) - already processed through MLPs
-    p = pc.get_full_geometry_features()  # (N, 128)
+    p, a_features = pc.get_full_geometry_features()  # (N, 128)
     
     # KNN을 사용해서 주변 가우시안의 정보를 포함
-    # xyz가 변하지 않으므로 한 번만 계산하고 캐시
+    # xyz가 변하지 않으므로 한 번만 계산하고 캐시 (더 많은 후보를 뽑아서 저장)
     if pc._neighbor_indices is None:
         xyz = pc.get_xyz  # (N, 3)
-        k_neighbors = pc._k_neighbors
-        neighbor_indices, neighbor_distances = get_knn_neighbors(xyz, k=k_neighbors)
-        pc._neighbor_indices = neighbor_indices  # 캐시 저장
+        k_candidates = getattr(pc, '_k_candidates', 32)  # 1차로 뽑을 후보 개수 (기본값 32)
+        candidate_indices, candidate_distances = get_knn_neighbors(xyz, k=k_candidates)
+        pc._neighbor_indices = candidate_indices  # 캐시 저장
     else:
-        neighbor_indices = pc._neighbor_indices  # 캐시된 결과 사용
+        candidate_indices = pc._neighbor_indices  # 캐시된 결과 사용
+    
+    # a_features의 유사도로 2차 선별하여 최종 이웃 선택
+    k_final = getattr(pc, '_k_neighbors', 8)  # 최종 선택할 이웃 개수 (기본값 8)
+    neighbor_indices = select_neighbors_by_feature_similarity(
+        candidate_indices, a_features, k_final=k_final
+    )
     
     # 주변 가우시안의 features를 aggregate
     neighbor_features = aggregate_neighbor_features(p, neighbor_indices, aggregation='mean')  # (N, 128)
