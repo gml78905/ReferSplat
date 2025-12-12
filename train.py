@@ -100,7 +100,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         checkpoint_path = os.path.join(checkpoint_dir, f"chkpnt_{epoch}.pth")
         torch.save((gaussians.capture(opt.include_feature), iteration), checkpoint_path)
         print(f"Checkpoint saved to: {checkpoint_path}")
+    
     progress_bar.close()
+    return gaussians  # 마지막 학습된 모델 반환
     
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -119,6 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--start_checkpoint", type=str, default=None, help="Path to start checkpoint. Default: {model_path}/checkpoints/stage1/chkpnt30000.pth")
     parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint saving")
+    parser.add_argument("--num_runs", type=int, default=1, help="Number of training runs. Each run will save checkpoints in name/{run_number} folder")
     args = parser.parse_args(sys.argv[1:])
     
     # --start_checkpoint가 지정되지 않았으면 기본값 설정: {model_path}/checkpoints/stage1/chkpnt30000.pth
@@ -136,6 +139,18 @@ if __name__ == "__main__":
     safe_state(args.quiet)
     epoch_num=5
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, args.name)
+    
+    # num_runs만큼 반복 학습
+    for run_num in range(1, args.num_runs + 1):
+        print(f"\n{'='*60}")
+        print(f"Starting training run {run_num}/{args.num_runs}")
+        print(f"{'='*60}")
+        
+        # 각 run마다 name/{run_num} 경로 사용
+        run_name = os.path.join(args.name, str(run_num))
+        
+        training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, run_name)
+        
+        print(f"Training run {run_num}/{args.num_runs} complete.")
 
     print("\nTraining complete.")
