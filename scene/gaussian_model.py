@@ -50,7 +50,7 @@ class GaussianModel:
         self._language_feature = None
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.mlp2=MLP2(16,256).to("cuda")  # 256차원으로 변경 (p와 차원 일치)
+        self.mlp2=MLP2(16,128).to("cuda")  # 128차원으로 변경 (p와 차원 일치)
         self.mlp3=MLP3(12,128).to("cuda")  # 기존 호환성을 위해 유지
         self.mlp1=MLP1(1024,128).to("cuda")
         # Individual MLPs for geometry features
@@ -69,6 +69,8 @@ class GaussianModel:
         self.scheduler = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self._neighbor_indices = None  # KNN 결과 캐시 (xyz가 변하지 않으므로 한 번만 계산)
+        self._k_neighbors = 16  # KNN 이웃 개수
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
@@ -77,7 +79,8 @@ class GaussianModel:
         for param in self.model.parameters():
             param.requires_grad = False
 
-        self.cross_attention=CrossAttention(dim=256, num_heads=1).to("cuda")  # 256차원으로 변경 (원본 128 + 주변 feature 128)
+        self.p_proj = nn.Linear(256, 128).to("cuda")  # 256차원을 128차원으로 projection
+        self.cross_attention=CrossAttention(dim=128, num_heads=1).to("cuda")  # 128차원으로 변경
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
@@ -104,6 +107,7 @@ class GaussianModel:
                 self.mlp1.state_dict(),
                 self.mlp2.state_dict(),
                 self.mlp3.state_dict(),
+                self.p_proj.state_dict(),
                 self.cross_attention.state_dict(),
                 self.mlp_xyz.state_dict(),
                 self.mlp_cov.state_dict(),
@@ -129,7 +133,7 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 23:
+        if len(model_args) == 24:
             # New checkpoint format with attribute_features and position_feature MLPs
             (self.active_sh_degree, 
             self._xyz, 
@@ -148,6 +152,7 @@ class GaussianModel:
             mlp1_params,
             mlp2_params,
             mlp3_params,
+            p_proj_params,
             cross_attention_params,
             mlp_xyz_params,
             mlp_cov_params,
@@ -159,6 +164,7 @@ class GaussianModel:
             self.mlp1.load_state_dict(mlp1_params)
             self.mlp2.load_state_dict(mlp2_params)
             self.mlp3.load_state_dict(mlp3_params)
+            self.p_proj.load_state_dict(p_proj_params)
             self.cross_attention.load_state_dict(cross_attention_params)
             self.mlp_xyz.load_state_dict(mlp_xyz_params)
             self.mlp_cov.load_state_dict(mlp_cov_params)
@@ -407,6 +413,7 @@ class GaussianModel:
                  {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
                  {'params': self.mlp2.parameters(), 'lr': training_args.mlp_lr, "name": "mlp2"},
                  {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
+                 {'params': self.p_proj.parameters(), 'lr': training_args.mlp_lr, "name": "p_proj"},
                  {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
                  {'params': self.mlp_xyz.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_xyz"},
                  {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_lr, "name": "mlp_cov"},
@@ -546,6 +553,8 @@ class GaussianModel:
         return optimizable_tensors
 
     def prune_points(self, mask):
+        # 가우시안이 제거되면 KNN 캐시 무효화
+        self._neighbor_indices = None
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
@@ -593,6 +602,9 @@ class GaussianModel:
         "rotation" : new_rotation}
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
+        
+        # 가우시안이 추가되면 KNN 캐시 무효화
+        self._neighbor_indices = None
         
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]

@@ -141,17 +141,23 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     p = pc.get_full_geometry_features()  # (N, 128)
     
     # KNN을 사용해서 주변 가우시안의 정보를 포함
-    xyz = pc.get_xyz  # (N, 3)
-    k_neighbors = 8  # 주변 가우시안 개수 (필요에 따라 조정 가능)
-    neighbor_indices, neighbor_distances = get_knn_neighbors(xyz, k=k_neighbors)
+    # xyz가 변하지 않으므로 한 번만 계산하고 캐시
+    if pc._neighbor_indices is None:
+        xyz = pc.get_xyz  # (N, 3)
+        k_neighbors = pc._k_neighbors
+        neighbor_indices, neighbor_distances = get_knn_neighbors(xyz, k=k_neighbors)
+        pc._neighbor_indices = neighbor_indices  # 캐시 저장
+    else:
+        neighbor_indices = pc._neighbor_indices  # 캐시된 결과 사용
     
     # 주변 가우시안의 features를 aggregate
     neighbor_features = aggregate_neighbor_features(p, neighbor_indices, aggregation='mean')  # (N, 128)
     
     # 원래 feature와 주변 feature를 결합 (concatenate 또는 add)
-    # 방법 1: Concatenate (256차원)
+    # 방법 1: Concatenate (256차원) 후 128차원으로 projection
     p_enhanced = torch.cat([p, neighbor_features], dim=-1)  # (N, 256)
-    p = F.normalize(p_enhanced, dim=-1)
+    p = pc.p_proj(p_enhanced)  # (N, 256) -> (N, 128)
+    p = F.normalize(p, dim=-1)
     
     # 방법 2: Weighted sum (128차원 유지)
     # alpha = 0.5  # 원래 feature와 주변 feature의 가중치 (필요에 따라 조정 가능)
