@@ -175,7 +175,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Use full geometry features: each feature processed by individual MLP, then fused
     # Returns (N, 128) - already processed through MLPs
-    p, a_features = pc.get_full_geometry_features()  # (N, 128)
+    g_features, a_features = pc.get_full_geometry_features()  # (N, 128)
+    p = g_features + a_features
     
     # KNN을 사용해서 주변 가우시안의 정보를 포함
     # xyz가 변하지 않으므로 한 번만 계산하고 캐시 (더 많은 후보를 뽑아서 저장)
@@ -194,11 +195,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     )
     
     # 주변 가우시안의 features를 aggregate
-    neighbor_features = aggregate_neighbor_features(p, neighbor_indices, aggregation='mean')  # (N, 128)
+    neighbor_features = aggregate_neighbor_features(a_features, neighbor_indices, aggregation='mean')  # (N, 128)
+    p_neighbor_features = g_features + neighbor_features 
     
     # 원래 feature와 주변 feature를 결합 (concatenate 또는 add)
     # 방법 1: Concatenate (256차원) 후 128차원으로 projection
-    p_enhanced = torch.cat([p, neighbor_features], dim=-1)  # (N, 256)
+    p_enhanced = torch.cat([p, p_neighbor_features], dim=-1)  # (N, 256)
     p = pc.p_proj(p_enhanced)  # (N, 256) -> (N, 128)
     p = F.normalize(p, dim=-1)
     

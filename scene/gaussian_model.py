@@ -364,9 +364,9 @@ class GaussianModel:
         position_feature = self.mlp_position_feature(xyz_embed)  # (N, 32) -> (N, 128)
         
         # 7. Add position_feature and attribute_features
-        geometry_features = position_feature + attribute_features  # (N, 128)
+        # geometry_features = position_feature + attribute_features  # (N, 128)
         
-        return geometry_features, attribute_features
+        return position_feature, attribute_features
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
