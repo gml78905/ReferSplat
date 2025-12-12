@@ -50,7 +50,7 @@ class GaussianModel:
         self._language_feature = None
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.mlp2=MLP2(16,128).to("cuda")
+        self.mlp2=MLP2(16,256).to("cuda")  # 256차원으로 변경 (p와 차원 일치)
         self.mlp3=MLP3(12,128).to("cuda")  # 기존 호환성을 위해 유지
         self.mlp1=MLP1(1024,128).to("cuda")
         # Individual MLPs for geometry features
@@ -77,7 +77,7 @@ class GaussianModel:
         for param in self.model.parameters():
             param.requires_grad = False
 
-        self.cross_attention=CrossAttention(dim=128, num_heads=1).to("cuda")
+        self.cross_attention=CrossAttention(dim=256, num_heads=1).to("cuda")  # 256차원으로 변경 (원본 128 + 주변 feature 128)
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():

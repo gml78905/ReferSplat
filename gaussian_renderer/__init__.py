@@ -4,6 +4,7 @@ import time
 import torch.nn.functional as F
 import torch
 import math
+from sklearn.neighbors import NearestNeighbors
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
@@ -14,6 +15,59 @@ def min_max_normalize_torch(points):
     
     normalized_points = 2 * (points - min_vals) / (max_vals - min_vals) - 1
     return normalized_points
+
+def get_knn_neighbors(xyz, k=8):
+    """
+    KNN을 사용해서 각 가우시안에 대해 k개의 가장 가까운 이웃을 찾습니다.
+    업계 표준 방식 (KD-Tree)을 사용하여 메모리 효율적이고 빠른 검색을 수행합니다.
+    
+    Args:
+        xyz: (N, 3) 가우시안의 3D 위치 (GPU tensor)
+        k: 이웃의 개수
+    
+    Returns:
+        neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스 (GPU tensor)
+        neighbor_distances: (N, k) 각 가우시안과 이웃 간의 거리 (GPU tensor)
+    """
+    # 1. CPU로 내리기 (메모리 안전지대)
+    points_np = xyz.detach().cpu().numpy()
+    
+    # 2. KD-Tree 빌드 및 검색 (n_jobs=-1로 병렬 처리)
+    # 알고리즘이 알아서 'ball_tree', 'kd_tree', 'brute' 중 최적을 선택함
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto', n_jobs=-1).fit(points_np)
+    
+    # 3. 검색 (메모리 안 터짐)
+    distances, indices = nbrs.kneighbors(points_np)
+    
+    # 4. 자기 자신 제외 후 GPU로 복귀
+    return torch.from_numpy(indices[:, 1:]).cuda(), torch.from_numpy(distances[:, 1:]).cuda()
+
+def aggregate_neighbor_features(geometry_features, neighbor_indices, aggregation='mean'):
+    """
+    주변 가우시안의 geometry features를 aggregate합니다.
+    
+    Args:
+        geometry_features: (N, 128) 각 가우시안의 geometry features
+        neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스
+        aggregation: 'mean', 'max', 'sum' 중 하나
+    
+    Returns:
+        neighbor_features: (N, 128) 주변 가우시안의 aggregate된 features
+    """
+    # 각 가우시안의 이웃 features를 가져오기 (N, k, 128)
+    neighbor_features = geometry_features[neighbor_indices]  # (N, k, 128)
+    
+    # Aggregate
+    if aggregation == 'mean':
+        aggregated = torch.mean(neighbor_features, dim=1)  # (N, 128)
+    elif aggregation == 'max':
+        aggregated, _ = torch.max(neighbor_features, dim=1)  # (N, 128)
+    elif aggregation == 'sum':
+        aggregated = torch.sum(neighbor_features, dim=1)  # (N, 128)
+    else:
+        raise ValueError(f"Unknown aggregation method: {aggregation}")
+    
+    return aggregated
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, opt, scaling_modifier = 1.0, override_color = None,sentence=None,ratio=0.03):
     """
@@ -85,7 +139,25 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Use full geometry features: each feature processed by individual MLP, then fused
     # Returns (N, 128) - already processed through MLPs
     p = pc.get_full_geometry_features()  # (N, 128)
-    p=F.normalize(p,dim=-1)
+    
+    # KNN을 사용해서 주변 가우시안의 정보를 포함
+    xyz = pc.get_xyz  # (N, 3)
+    k_neighbors = 8  # 주변 가우시안 개수 (필요에 따라 조정 가능)
+    neighbor_indices, neighbor_distances = get_knn_neighbors(xyz, k=k_neighbors)
+    
+    # 주변 가우시안의 features를 aggregate
+    neighbor_features = aggregate_neighbor_features(p, neighbor_indices, aggregation='mean')  # (N, 128)
+    
+    # 원래 feature와 주변 feature를 결합 (concatenate 또는 add)
+    # 방법 1: Concatenate (256차원)
+    p_enhanced = torch.cat([p, neighbor_features], dim=-1)  # (N, 256)
+    p = F.normalize(p_enhanced, dim=-1)
+    
+    # 방법 2: Weighted sum (128차원 유지)
+    # alpha = 0.5  # 원래 feature와 주변 feature의 가중치 (필요에 따라 조정 가능)
+    # p_enhanced = alpha * p + (1 - alpha) * neighbor_features  # (N, 128)
+    # p = F.normalize(p_enhanced, dim=-1)
+    
     x=pc.mlp2(pc._language_feature)
     g=pc.cross_attention(x,p,t_token)
     features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)

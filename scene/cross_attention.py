@@ -57,7 +57,7 @@ class MLP2(nn.Module):
         super(MLP2, self).__init__()
         self.fc1 = nn.Linear(in_dim, 32)
         self.fc2 = nn.Linear(32 ,64)
-        self.fc3 = nn.Linear(64, 128)
+        self.fc3 = nn.Linear(64, out_dim)
         
     def forward(self, x):
         x = F.relu(self.fc1(x))
