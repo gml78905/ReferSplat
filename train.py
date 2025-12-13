@@ -1,6 +1,8 @@
 import os
 import torch
 import matplotlib.pyplot as plt
+import random
+import numpy as np
 from random import randint
 from utils.loss_utils import l1_loss, ssim,bce_loss,dice_loss,multi_pos_cross_entropy
 from gaussian_renderer import render
@@ -13,14 +15,36 @@ import torch.nn.functional as F
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import time
+from datetime import timedelta
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+
+def set_seed(seed=42):
+    """
+    모든 랜덤 시드를 고정하여 재현 가능한 결과를 보장합니다.
+    
+    Args:
+        seed: 고정할 시드 값 (기본값: 42)
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # CuDNN의 결정론적 동작 설정 (성능이 약간 느려질 수 있음)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed set to: {seed}")
     
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, epoch, name):
+    
+    # 학습 시작 시간 기록
+    train_start_time = time.time()
     
     first_iter = 0
     gaussians = GaussianModel(dataset.sh_degree)
@@ -102,7 +126,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         print(f"Checkpoint saved to: {checkpoint_path}")
     
     progress_bar.close()
-    return gaussians  # 마지막 학습된 모델 반환
+    
+    # 학습 종료 시간 기록
+    train_end_time = time.time()
+    train_duration = train_end_time - train_start_time
+    
+    return gaussians, train_duration  # 마지막 학습된 모델과 학습 시간 반환
     
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -140,17 +169,35 @@ if __name__ == "__main__":
     epoch_num=5
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     
+    # 각 run별 학습 시간 저장
+    run_times = []
+    
     # num_runs만큼 반복 학습
     for run_num in range(1, args.num_runs + 1):
         print(f"\n{'='*60}")
         print(f"Starting training run {run_num}/{args.num_runs}")
         print(f"{'='*60}")
+
+        set_seed(42)
         
         # 각 run마다 name/{run_num} 경로 사용
         run_name = os.path.join(args.name, str(run_num))
         
-        training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, run_name)
+        gaussians, train_duration = training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, run_name)
         
-        print(f"Training run {run_num}/{args.num_runs} complete.")
+        run_times.append((run_num, train_duration))
+        print(f"Training run {run_num}/{args.num_runs} complete. Time: {timedelta(seconds=int(train_duration))}")
 
+    # 학습 시간 결과를 파일에 저장
+    time_results_dir = os.path.join(args.model_path, "checkpoints", "stage2", args.name)
+    os.makedirs(time_results_dir, exist_ok=True)
+    time_results_file = os.path.join(time_results_dir, "train_time.txt")
+    
+    with open(time_results_file, "w") as f:
+        f.write("Training Time Results\n")
+        f.write("=" * 60 + "\n\n")
+        for run_num, duration in run_times:
+            f.write(f"Run {run_num}: {timedelta(seconds=int(duration))} ({duration:.2f} seconds)\n")
+    
+    print(f"\nTraining time results saved to: {time_results_file}")
     print("\nTraining complete.")
