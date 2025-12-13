@@ -4,6 +4,7 @@ import time
 import torch.nn.functional as F
 import torch
 import math
+from sklearn.neighbors import NearestNeighbors
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
@@ -15,9 +16,10 @@ def min_max_normalize_torch(points):
     normalized_points = 2 * (points - min_vals) / (max_vals - min_vals) - 1
     return normalized_points
 
-def get_knn_neighbors_torch(xyz, k=16):
+def get_knn_neighbors_torch(xyz, k=8):
     """
-    PyTorch를 사용하여 KNN 이웃을 찾습니다 (GPU에서 직접 계산).
+    KNN을 사용해서 각 가우시안에 대해 k개의 가장 가까운 이웃을 찾습니다.
+    업계 표준 방식 (KD-Tree)을 사용하여 메모리 효율적이고 빠른 검색을 수행합니다.
     
     Args:
         xyz: (N, 3) 가우시안의 3D 위치 (GPU tensor)
@@ -25,21 +27,20 @@ def get_knn_neighbors_torch(xyz, k=16):
     
     Returns:
         neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스 (GPU tensor)
+        neighbor_distances: (N, k) 각 가우시안과 이웃 간의 거리 (GPU tensor)
     """
-    N = xyz.shape[0]
+    # 1. CPU로 내리기 (메모리 안전지대)
+    points_np = xyz.detach().cpu().numpy()
     
-    # 모든 점 간의 거리 계산: (N, 1, 3) - (1, N, 3) -> (N, N, 3) -> (N, N)
-    xyz_expanded = xyz.unsqueeze(1)  # (N, 1, 3)
-    xyz_transposed = xyz.unsqueeze(0)  # (1, N, 3)
-    distances = torch.norm(xyz_expanded - xyz_transposed, dim=2)  # (N, N)
+    # 2. KD-Tree 빌드 및 검색 (n_jobs=-1로 병렬 처리)
+    # 알고리즘이 알아서 'ball_tree', 'kd_tree', 'brute' 중 최적을 선택함
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto', n_jobs=-1).fit(points_np)
     
-    # 자기 자신 제외 (거리를 매우 큰 값으로 설정)
-    distances.fill_diagonal_(float('inf'))
+    # 3. 검색 (메모리 안 터짐)
+    distances, indices = nbrs.kneighbors(points_np)
     
-    # 가장 가까운 k개 이웃 찾기
-    _, neighbor_indices = torch.topk(distances, k, dim=1, largest=False)  # (N, k)
-    
-    return neighbor_indices
+    # 4. 자기 자신 제외 후 GPU로 복귀
+    return torch.from_numpy(indices[:, 1:]).cuda(), torch.from_numpy(distances[:, 1:]).cuda()
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, opt, scaling_modifier = 1.0, override_color = None,sentence=None,ratio=0.03):
     """
@@ -117,7 +118,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # xyz 기반 KNN 이웃 찾기 (캐시 사용)
     if pc._neighbor_indices_lang is None:
         xyz = pc.get_xyz  # (N, 3)
-        neighbor_indices_lang = get_knn_neighbors_torch(xyz, k=16)  # (N, 16)
+        neighbor_indices_lang, _ = get_knn_neighbors_torch(xyz, k=16)  # (N, 16), 거리는 사용하지 않음
         pc._neighbor_indices_lang = neighbor_indices_lang  # 캐시 저장
     else:
         neighbor_indices_lang = pc._neighbor_indices_lang  # 캐시된 결과 사용
