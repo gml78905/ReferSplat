@@ -15,6 +15,32 @@ def min_max_normalize_torch(points):
     normalized_points = 2 * (points - min_vals) / (max_vals - min_vals) - 1
     return normalized_points
 
+def get_knn_neighbors_torch(xyz, k=16):
+    """
+    PyTorch를 사용하여 KNN 이웃을 찾습니다 (GPU에서 직접 계산).
+    
+    Args:
+        xyz: (N, 3) 가우시안의 3D 위치 (GPU tensor)
+        k: 이웃의 개수
+    
+    Returns:
+        neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스 (GPU tensor)
+    """
+    N = xyz.shape[0]
+    
+    # 모든 점 간의 거리 계산: (N, 1, 3) - (1, N, 3) -> (N, N, 3) -> (N, N)
+    xyz_expanded = xyz.unsqueeze(1)  # (N, 1, 3)
+    xyz_transposed = xyz.unsqueeze(0)  # (1, N, 3)
+    distances = torch.norm(xyz_expanded - xyz_transposed, dim=2)  # (N, N)
+    
+    # 자기 자신 제외 (거리를 매우 큰 값으로 설정)
+    distances.fill_diagonal_(float('inf'))
+    
+    # 가장 가까운 k개 이웃 찾기
+    _, neighbor_indices = torch.topk(distances, k, dim=1, largest=False)  # (N, k)
+    
+    return neighbor_indices
+
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, opt, scaling_modifier = 1.0, override_color = None,sentence=None,ratio=0.03):
     """
     Render the scene. 
@@ -86,7 +112,26 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Returns (N, 128) - already processed through MLPs
     p = pc.get_full_geometry_features()  # (N, 128)
     p=F.normalize(p,dim=-1)
-    x=pc.mlp2(pc._language_feature)
+    
+    # KNN을 사용하여 주변 16개 feature의 평균값과 자신의 값을 concat
+    # xyz 기반 KNN 이웃 찾기 (캐시 사용)
+    if pc._neighbor_indices_lang is None:
+        xyz = pc.get_xyz  # (N, 3)
+        neighbor_indices_lang = get_knn_neighbors_torch(xyz, k=16)  # (N, 16)
+        pc._neighbor_indices_lang = neighbor_indices_lang  # 캐시 저장
+    else:
+        neighbor_indices_lang = pc._neighbor_indices_lang  # 캐시된 결과 사용
+    
+    # 주변 이웃들의 language_feature 가져오기 (N, 16, 16)
+    neighbor_lang_features = pc._language_feature[neighbor_indices_lang]  # (N, 16, 16)
+    
+    # 주변 feature의 평균 계산
+    neighbor_lang_mean = torch.mean(neighbor_lang_features, dim=1)  # (N, 16)
+    
+    # 자신의 값과 concat: (N, 16) + (N, 16) -> (N, 32)
+    language_feature_concat = torch.cat([pc._language_feature, neighbor_lang_mean], dim=-1)  # (N, 32)
+    
+    x=pc.mlp2(language_feature_concat)
     g=pc.cross_attention(x,p,t_token)
     features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
     features=features.sum(dim=-1,keepdim=True)

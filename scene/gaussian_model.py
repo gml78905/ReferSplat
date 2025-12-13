@@ -50,7 +50,7 @@ class GaussianModel:
         self._language_feature = None
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.mlp2=MLP2(16,128).to("cuda")
+        self.mlp2=MLP2(32,128).to("cuda")  # 32채널: 자신(16) + 주변 평균(16)
         self.mlp3=MLP3(12,128).to("cuda")  # 기존 호환성을 위해 유지
         self.mlp1=MLP1(1024,128).to("cuda")
         # Individual MLPs for geometry features
@@ -67,6 +67,7 @@ class GaussianModel:
         self.scheduler = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self._neighbor_indices_lang = None  # Language feature용 KNN 결과 캐시
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
