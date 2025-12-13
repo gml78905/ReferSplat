@@ -125,13 +125,24 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # 주변 이웃들의 language_feature 가져오기 (N, 16, 16)
     neighbor_lang_features = pc._language_feature[neighbor_indices_lang]  # (N, 16, 16)
     
-    # 주변 feature의 평균 계산
-    neighbor_lang_mean = torch.mean(neighbor_lang_features, dim=1)  # (N, 16)
+    # 자신의 language feature와 이웃들의 language feature 간 cross-attention
+    # Query: 자신의 feature (N, 16)
+    # Key/Value: 이웃들의 feature (N, 16, 16)
+    query = pc._language_feature.unsqueeze(1)  # (N, 1, 16)
+    keys = neighbor_lang_features  # (N, 16, 16)
+    values = neighbor_lang_features  # (N, 16, 16)
     
-    # 자신의 값과 concat: (N, 16) + (N, 16) -> (N, 32)
-    language_feature_concat = torch.cat([pc._language_feature, neighbor_lang_mean], dim=-1)  # (N, 32)
+    # Cross-attention 계산
+    attention_scores = torch.bmm(query, keys.transpose(1, 2))  # (N, 1, 16)
+    attention_scores = attention_scores / (16 ** 0.5)  # scale
+    attention_weights = F.softmax(attention_scores, dim=-1)  # (N, 1, 16)
+    attended_features = torch.bmm(attention_weights, values)  # (N, 1, 16)
+    attended_features = attended_features.squeeze(1)  # (N, 16)
     
-    x=pc.mlp2(language_feature_concat)
+    # 자신의 feature와 attention 결과를 결합 (더하기로 결합하여 16차원 유지)
+    enhanced_language_feature = pc._language_feature + attended_features  # (N, 16)
+    
+    x=pc.mlp2(enhanced_language_feature)
     g=pc.cross_attention(x,p,t_token)
     features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
     features=features.sum(dim=-1,keepdim=True)
