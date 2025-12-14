@@ -67,7 +67,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     mean_tensor=F.normalize(mean_tensor,dim=1)
                     features=F.normalize(features,dim=1)
 
-                    cosine_similarities=(torch.matmul(mean_tensor,features.T)/0.1).to("cuda")
+                    # cosine_similarities=(torch.matmul(mean_tensor,features.T)/0.1).to("cuda")
                     
                     sentence_tensor = torch.zeros(len(viewpoint_cam.sentence))
                     
@@ -76,9 +76,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     category_indices = [idx for idx, cat in enumerate(viewpoint_cam.category) if cat == current_category]
                     sentence_tensor[category_indices] = 1
                     sentence_tensor = sentence_tensor.unsqueeze(0).to("cuda")
-                    com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
+                    # com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
-                    loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
+                    # loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
+                    loss = bce_loss(language_feature, gt_mask)
                     loss.backward()
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)

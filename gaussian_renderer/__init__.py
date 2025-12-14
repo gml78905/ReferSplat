@@ -172,6 +172,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # t_token: (seq_len, 128) - 각 토큰의 embedding
     # 1. 점수 계산: 각 단어(토큰)가 얼마나 중요한지 점수를 매김
     # score = Linear(T_emb) -> (seq_len, 1)
+    t_token = t_token.squeeze(0)
     score = pc.text_score_layer_sem(t_token)  # (seq_len, 1)
     score = score.squeeze(-1)  # (seq_len,)
     
@@ -190,7 +191,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     T_sem = F.normalize(T_sem, dim=-1)  # L2 normalize
     
     # 메모리 최적화: 중간 텐서 삭제
-    del score, alpha, T_emb_weighted, T_final
+    # del score, alpha, T_emb_weighted, T_final
     
     # Cosine Similarity: f_ctx (N, 16) vs T_sem (1, 16)
     # 메모리 효율: 브로드캐스팅으로 직접 계산 (큰 텐서 생성 방지)
@@ -234,7 +235,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     sorted_indices = torch.argsort(features, descending=True)
     indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
    
-    selected_tensors = g[indices]
+    selected_tensors = f_ctx[indices]
 
     mean_tensor = torch.mean(selected_tensors, dim=0, keepdim=True)
     
