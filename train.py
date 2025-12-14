@@ -20,10 +20,11 @@ except ImportError:
     TENSORBOARD_FOUND = False
     
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, epoch, name):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, epoch, name, k_neighbors=16):
     
     first_iter = 0
     gaussians = GaussianModel(dataset.sh_degree)
+    gaussians._k_neighbors = k_neighbors  # KNN 이웃 개수 설정
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
@@ -122,6 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default=None, help="Path to start checkpoint. Default: {model_path}/checkpoints/stage1/chkpnt30000.pth")
     parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint saving")
     parser.add_argument("--num_runs", type=int, default=1, help="Number of training runs. Each run will save checkpoints in name/{run_number} folder")
+    parser.add_argument("--k_neighbors", type=int, default=16, help="Number of KNN neighbors for feature aggregation. Default: 16")
     args = parser.parse_args(sys.argv[1:])
     
     # --start_checkpoint가 지정되지 않았으면 기본값 설정: {model_path}/checkpoints/stage1/chkpnt30000.pth
@@ -149,7 +151,7 @@ if __name__ == "__main__":
         # 각 run마다 name/{run_num} 경로 사용
         run_name = os.path.join(args.name, str(run_num))
         
-        training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, run_name)
+        training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, epoch_num, run_name, k_neighbors=args.k_neighbors)
         
         print(f"Training run {run_num}/{args.num_runs} complete.")
 

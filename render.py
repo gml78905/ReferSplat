@@ -137,9 +137,10 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
             torchvision.utils.save_image(gt_overlay_image, os.path.join(gt_overlay_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
                
                
-def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, skip_train : bool, skip_test : bool, args):
+def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, skip_train : bool, skip_test : bool, args, k_neighbors=16):
     with torch.no_grad():  
         gaussians = GaussianModel(dataset.sh_degree)
+        gaussians._k_neighbors = k_neighbors  # KNN 이웃 개수 설정
         scene = Scene(dataset, gaussians, shuffle=False)
         checkpoint = os.path.join(args.model_path, model_path)
         (model_params, first_iter) = torch.load(checkpoint,map_location=f'cuda:{torch.cuda.current_device()}')
@@ -176,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--include_feature", action="store_true")
     parser.add_argument("--name", type=str, required=True, help="Experiment name for checkpoint loading")
     parser.add_argument("--run_number", type=int, default=1, help="Run number (for multi-run training). Default: 1")
+    parser.add_argument("--k_neighbors", type=int, default=16, help="Number of KNN neighbors for feature aggregation. Default: 16")
     args = get_combined_args(parser)
     args.include_feature=True
     
@@ -184,4 +186,4 @@ if __name__ == "__main__":
         args.iteration = 4  # 기본값
     model_path = os.path.join("checkpoints", "stage2", args.name, str(args.run_number), f"chkpnt_{args.iteration}.pth")
     
-    render_sets(model.extract(args), model_path, pipeline.extract(args), args.skip_train, args.skip_test, args)
+    render_sets(model.extract(args), model_path, pipeline.extract(args), args.skip_train, args.skip_test, args, k_neighbors=args.k_neighbors)

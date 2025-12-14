@@ -1,9 +1,9 @@
 
-
 import time
 import torch.nn.functional as F
 import torch
 import math
+from sklearn.neighbors import NearestNeighbors
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
@@ -14,6 +14,81 @@ def min_max_normalize_torch(points):
     
     normalized_points = 2 * (points - min_vals) / (max_vals - min_vals) - 1
     return normalized_points
+
+def fuse_neighbor_features(pc, neighbor_indices):
+    """
+    각 가우시안이 주변 가우시안의 정보와 융합하는 과정
+    
+    Args:
+        pc: GaussianModel 인스턴스
+        neighbor_indices: (N, K) 각 가우시안의 K개 neighbor 인덱스
+    
+    Returns:
+        f_ctx: (N, 16) 주변 맥락 정보가 융합된 intrinsic feature
+    """
+    # 1. Intrinsic feature 계산
+    intrinsic_feature = pc.get_intrinsic_feature()  # (N, 9)
+    intrinsic_feature = pc.intrinsic_encoder(intrinsic_feature)  # (N, 16)
+    
+    # 2. 상대 위치 계산 및 Positional Encoding
+    xyz = pc.get_xyz  # (N, 3)
+    k_neighbors = neighbor_indices.shape[1]  # K
+    
+    p_i = xyz.unsqueeze(1).expand(-1, k_neighbors, -1)  # (N, K, 3) - 현재 가우시안
+    p_j = xyz[neighbor_indices]  # (N, K, 3) - neighbor 가우시안들
+    delta_p = p_j - p_i  # (N, K, 3) - 상대 위치
+    pos_emb = pc.pos_mlp(delta_p)  # (N, K, 16) - Positional Encoding
+    
+    # 3. Feature 준비
+    f_i = intrinsic_feature.unsqueeze(1).expand(-1, k_neighbors, -1)  # (N, K, 16) - 현재 가우시안
+    f_j = intrinsic_feature[neighbor_indices]  # (N, K, 16) - neighbor 가우시안들
+    
+    # 4. Attention score 계산: e_ij = LeakyReLU(W_att [f_i || f_j || MLP_pos(Δp_ij)])
+    concat_feat = torch.cat([f_i, f_j, pos_emb], dim=-1)  # (N, K, 48)
+    e_ij = pc.att_layer(concat_feat)  # (N, K, 1)
+    e_ij = F.leaky_relu(e_ij, negative_slope=0.2)  # LeakyReLU
+    e_ij = e_ij.squeeze(-1)  # (N, K)
+    
+    # 5. Attention weights 계산
+    alpha_ij = F.softmax(e_ij, dim=1)  # (N, K)
+    alpha_ij = alpha_ij.unsqueeze(-1)  # (N, K, 1)
+    
+    # 6. Aggregation (Weighted Sum)
+    # 가중치(alpha) * neighbor feature(f_j)를 이웃 차원(dim=1)에 대해 합산
+    context = torch.sum(alpha_ij * f_j, dim=1)  # (N, 16) - 주변 맥락 정보
+    
+    # 7. Residual Connection (Update)
+    # 원래 intrinsic_feature를 유지하면서 맥락 정보 추가
+    f_ctx = intrinsic_feature + context  # (N, 16)
+    f_ctx = pc.layer_norm(f_ctx)
+    
+    return f_ctx
+
+def get_knn_neighbors(xyz, k=8):
+    """
+    KNN을 사용해서 각 가우시안에 대해 k개의 가장 가까운 이웃을 찾습니다.
+    업계 표준 방식 (KD-Tree)을 사용하여 메모리 효율적이고 빠른 검색을 수행합니다.
+    
+    Args:
+        xyz: (N, 3) 가우시안의 3D 위치 (GPU tensor)
+        k: 이웃의 개수
+    
+    Returns:
+        neighbor_indices: (N, k) 각 가우시안의 k개 이웃 인덱스 (GPU tensor)
+        neighbor_distances: (N, k) 각 가우시안과 이웃 간의 거리 (GPU tensor)
+    """
+    # 1. CPU로 내리기 (메모리 안전지대)
+    points_np = xyz.detach().cpu().numpy()
+    
+    # 2. KD-Tree 빌드 및 검색 (n_jobs=-1로 병렬 처리)
+    # 알고리즘이 알아서 'ball_tree', 'kd_tree', 'brute' 중 최적을 선택함
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto', n_jobs=-1).fit(points_np)
+    
+    # 3. 검색 (메모리 안 터짐)
+    distances, indices = nbrs.kneighbors(points_np)
+    
+    # 4. 자기 자신 제외 후 GPU로 복귀
+    return torch.from_numpy(indices[:, 1:]).cuda(), torch.from_numpy(distances[:, 1:]).cuda()
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, opt, scaling_modifier = 1.0, override_color = None,sentence=None,ratio=0.03):
     """
@@ -81,13 +156,40 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
     
+    if pc._neighbor_indices is None:
+        xyz = pc.get_xyz  # (N, 3)
+        k_neighbors = pc._k_neighbors
+        neighbor_indices, neighbor_distances = get_knn_neighbors(xyz, k=k_neighbors)
+        pc._neighbor_indices = neighbor_indices  # 캐시 저장
+    else:
+        neighbor_indices = pc._neighbor_indices  # 캐시된 결과 사용
+    
+    # 주변 가우시안 정보와 융합
+    f_ctx = fuse_neighbor_features(pc, neighbor_indices)  # (N, 16)
+    
 
-    p=pc.mlp3(pc.get_xyz)
-    p=F.normalize(p,dim=-1)
-    intrinsic_feature=pc.get_intrinsic_feature()  # Covariance와 features_dc로부터 생성 (N, 9)
-    intrinsic_feature=pc.intrinsic_encoder(intrinsic_feature)  # (N, 9) -> (N, 16) - Intrinsic_encoder
-    intrinsic_feature=pc.mlp2(intrinsic_feature)
-    g=pc.cross_attention(intrinsic_feature,p,t_token)
+    
+    # Positional encoding을 위한 상대 위치 계산 (cross_attention용)
+    xyz = pc.get_xyz  # (N, 3)
+    k_neighbors = neighbor_indices.shape[1]
+    p_i = xyz.unsqueeze(1).expand(-1, k_neighbors, -1)  # (N, K, 3)
+    p_j = xyz[neighbor_indices]  # (N, K, 3)
+    delta_p = p_j - p_i  # (N, K, 3)
+    pos_emb = pc.pos_mlp(delta_p)  # (N, K, 16)
+    
+    # Attention weights로 pos_emb를 가중 평균하여 p 생성
+    intrinsic_feature = pc.get_intrinsic_feature()  # (N, 9)
+    intrinsic_feature = pc.intrinsic_encoder(intrinsic_feature)  # (N, 16)
+    f_i = intrinsic_feature.unsqueeze(1).expand(-1, k_neighbors, -1)  # (N, K, 16)
+    f_j = intrinsic_feature[neighbor_indices]  # (N, K, 16)
+    concat_feat = torch.cat([f_i, f_j, pos_emb], dim=-1)  # (N, K, 48)
+    e_ij = pc.att_layer(concat_feat)  # (N, K, 1)
+    e_ij = F.leaky_relu(e_ij, negative_slope=0.2).squeeze(-1)  # (N, K)
+    attention_weights = F.softmax(e_ij, dim=1)  # (N, K)
+    p = torch.sum(attention_weights.unsqueeze(-1) * pos_emb, dim=1)  # (N, 16)
+    p = F.normalize(p, dim=-1)
+    
+    g = pc.cross_attention(f_ctx, p, t_token)
     features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
     features=features.sum(dim=-1,keepdim=True)
 

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads):
@@ -52,20 +53,6 @@ class MLP1(nn.Module):
         x = self.fc3(x)
         return x  
 
-class MLP2(nn.Module):
-    def __init__(self, in_dim=16, out_dim=128):
-        super(MLP2, self).__init__()
-        self.fc1 = nn.Linear(in_dim, 32)
-        self.fc2 = nn.Linear(32 ,64)
-        self.fc3 = nn.Linear(64, 128)
-        
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        
-        x = F.relu(self.fc2(x))
-        
-        x = self.fc3(x)
-        return x  
 
 class IntrinsicEncoder(nn.Module):
     """
@@ -109,18 +96,61 @@ class IntrinsicEncoder(nn.Module):
     def forward(self, x):
         return self.net(x)
     
-class MLP3(nn.Module):
-    def __init__(self, in_dim=3, out_dim=128):
-        super(MLP3, self).__init__()
-        self.fc1 = nn.Linear(in_dim, 16)
-        self.fc2 = nn.Linear(16 ,64)
-        self.fc3 = nn.Linear(64, out_dim)
+class PositionalEncoding(nn.Module):
+    """
+    Phase 3 Branch B: Spatial Position Encoder
+    Input: (N, 3) -> Fourier Mapping -> MLP -> (N, 16)
+    """
+    def __init__(self, in_dim=3, out_dim=16, n_freqs=4):
+        super().__init__()
         
+        self.n_freqs = n_freqs
+        self.funcs = [torch.sin, torch.cos]
+        # 2^0 부터 2^(n-1) 까지 주파수 밴드 생성
+        self.freq_bands = 2**torch.linspace(0, n_freqs - 1, n_freqs)
+        
+        # Fourier Mapping 차원: 3 + (3 * 2 * 6) = 39
+        input_dim = in_dim + (in_dim * 2 * n_freqs)
+        
+        self.net = nn.Sequential(
+            # Layer 1: Expansion & Feature Extraction
+            nn.Linear(input_dim, 32),
+            nn.LayerNorm(32),
+            nn.GELU(),
+            
+            # Layer 2: Reasoning (Depth)
+            nn.Linear(32, 32),
+            nn.LayerNorm(32),
+            nn.GELU(),
+            
+            # Layer 3: Compression -> 16차원
+            nn.Linear(32, out_dim) 
+        )
+        
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def get_embed(self, x):
+        """
+        Fourier Feature Mapping
+        """
+        out = [x]
+        for freq in self.freq_bands:
+            for func in self.funcs:
+                out.append(func(x * freq * np.pi))
+        return torch.cat(out, dim=-1)
+
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        
-        x = F.relu(self.fc2(x))
-        
-        x = self.fc3(x)
-        return x
+        # x: (N, 3) -> Fourier Embed (N, 39)
+        # Device mismatch 방지: freq_bands를 입력 x와 같은 장치로 이동
+        if self.freq_bands.device != x.device:
+            self.freq_bands = self.freq_bands.to(x.device)
+            
+        x_embed = self.get_embed(x)
+        return self.net(x_embed) # Output: (N, 16)
 

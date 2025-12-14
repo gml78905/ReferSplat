@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,IntrinsicEncoder,MLP3,CrossAttention, MLP2
+from .cross_attention import MLP1,IntrinsicEncoder,PositionalEncoding,CrossAttention
 
                        
 class GaussianModel:
@@ -50,9 +50,13 @@ class GaussianModel:
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
         self.intrinsic_encoder = IntrinsicEncoder(in_dim=9, hidden_dim=64, out_dim=16).to("cuda")
-        self.mlp3=MLP3(3,128).to("cuda")
+        self.pos_mlp=PositionalEncoding(3,16).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
-        self.mlp2=MLP2(16,128).to("cuda")
+        # Attention layer for neighbor features: [f_i || f_j || pos_emb] -> attention score
+        # concat_feat shape: (N, K, 48) = (N, K, 16+16+16)
+        self.att_layer = nn.Linear(48, 1).to("cuda")
+        # Layer normalization for fused neighbor features (f_ctx: (N, 16))
+        self.layer_norm = nn.LayerNorm(16).to("cuda")
         # MLPs for language feature generation from covariance and features_dc
 
         
@@ -63,6 +67,8 @@ class GaussianModel:
         self.scheduler = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self._neighbor_indices = None  # KNN 결과 캐시 (xyz가 변하지 않으므로 한 번만 계산)
+        self._k_neighbors = 16  # KNN 이웃 개수 (기본값)
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
@@ -96,7 +102,9 @@ class GaussianModel:
                 self.spatial_lr_scale,
                 self.mlp1.state_dict(),
                 self.intrinsic_encoder.state_dict(),
-                self.mlp3.state_dict(),
+                self.pos_mlp.state_dict(),
+                self.att_layer.state_dict(),
+                self.layer_norm.state_dict(),
                 self.cross_attention.state_dict(),
             )
         else:
@@ -116,7 +124,7 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 17:
+        if len(model_args) == 19:
             # New checkpoint format without mlp_cov, mlp_dc, mlp_intrinsic_feature (using concat)
             (self.active_sh_degree, 
             self._xyz, 
@@ -132,12 +140,16 @@ class GaussianModel:
             self.spatial_lr_scale,
             mlp1_params,
             intrinsic_encoder_params,
-            mlp3_params,
+            pos_mlp_params,
+            att_layer_params,
+            layer_norm_params,
             cross_attention_params,
             ) = model_args
             self.mlp1.load_state_dict(mlp1_params)
             self.intrinsic_encoder.load_state_dict(intrinsic_encoder_params)
-            self.mlp3.load_state_dict(mlp3_params)
+            self.pos_mlp.load_state_dict(pos_mlp_params)
+            self.att_layer.load_state_dict(att_layer_params)
+            self.layer_norm.load_state_dict(layer_norm_params)
             self.cross_attention.load_state_dict(cross_attention_params)
         elif len(model_args) == 20:
             # Old checkpoint format with mlp_cov, mlp_dc, mlp_intrinsic_feature (backward compatibility)
@@ -155,7 +167,7 @@ class GaussianModel:
             self.spatial_lr_scale,
             mlp1_params,
             intrinsic_encoder_params,
-            mlp3_params,
+            pos_mlp_params,
             _,  # Ignored old mlp_cov_params
             _,  # Ignored old mlp_dc_params
             _,  # Ignored old mlp_intrinsic_feature_params
@@ -163,7 +175,7 @@ class GaussianModel:
             ) = model_args
             self.mlp1.load_state_dict(mlp1_params)
             self.intrinsic_encoder.load_state_dict(intrinsic_encoder_params)
-            self.mlp3.load_state_dict(mlp3_params)
+            self.pos_mlp.load_state_dict(pos_mlp_params)
             self.cross_attention.load_state_dict(cross_attention_params)
         elif len(model_args) == 11: 
             # Old checkpoint format (backward compatibility)
@@ -316,7 +328,9 @@ class GaussianModel:
             l = [
                 {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
                 {'params': self.intrinsic_encoder.parameters(), 'lr': training_args.mlp_lr, "name": "intrinsic_encoder"},
-                {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
+                {'params': self.pos_mlp.parameters(), 'lr': training_args.mlp_lr, "name": "pos_mlp"},
+                {'params': self.att_layer.parameters(), 'lr': training_args.mlp_lr, "name": "att_layer"},
+                {'params': self.layer_norm.parameters(), 'lr': training_args.mlp_lr, "name": "layer_norm"},
                 {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
             ]
             self._xyz.requires_grad_(False)

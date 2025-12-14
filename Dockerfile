@@ -60,7 +60,8 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
         transformers \
         opencv-python \
         tensorboard \
-        matplotlib
+        matplotlib \
+        scikit-learn
 
 # 9. 로컬 submodules 복사
 COPY submodules /app/submodules
