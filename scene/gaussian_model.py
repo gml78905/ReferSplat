@@ -57,6 +57,12 @@ class GaussianModel:
         self.att_layer = nn.Linear(48, 1).to("cuda")
         # Layer normalization for fused neighbor features (f_ctx: (N, 16))
         self.layer_norm = nn.LayerNorm(16).to("cuda")
+        # Phase 3: Decoupled Spatial-Semantic Matching Module
+        # text_dim = 128 (mlp1 output), feature_dim = 16
+        self.text_score_layer_sem = nn.Linear(128, 1).to("cuda")  # Token importance scoring for semantic
+        self.text_score_layer_pos = nn.Linear(128, 1).to("cuda")  # Token importance scoring for spatial
+        self.text_proj_sem = nn.Linear(128, 16).to("cuda")  # Semantic projection
+        self.text_proj_pos = nn.Linear(128, 16).to("cuda")  # Spatial projection
         # MLPs for language feature generation from covariance and features_dc
 
         
@@ -105,6 +111,10 @@ class GaussianModel:
                 self.pos_mlp.state_dict(),
                 self.att_layer.state_dict(),
                 self.layer_norm.state_dict(),
+                self.text_score_layer_sem.state_dict(),
+                self.text_score_layer_pos.state_dict(),
+                self.text_proj_sem.state_dict(),
+                self.text_proj_pos.state_dict(),
                 self.cross_attention.state_dict(),
             )
         else:
@@ -124,7 +134,7 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 19:
+        if len(model_args) == 23:
             # New checkpoint format without mlp_cov, mlp_dc, mlp_intrinsic_feature (using concat)
             (self.active_sh_degree, 
             self._xyz, 
@@ -143,6 +153,10 @@ class GaussianModel:
             pos_mlp_params,
             att_layer_params,
             layer_norm_params,
+            text_score_layer_sem_params,
+            text_score_layer_pos_params,
+            text_proj_sem_params,
+            text_proj_pos_params,
             cross_attention_params,
             ) = model_args
             self.mlp1.load_state_dict(mlp1_params)
@@ -150,6 +164,10 @@ class GaussianModel:
             self.pos_mlp.load_state_dict(pos_mlp_params)
             self.att_layer.load_state_dict(att_layer_params)
             self.layer_norm.load_state_dict(layer_norm_params)
+            self.text_score_layer_sem.load_state_dict(text_score_layer_sem_params)
+            self.text_score_layer_pos.load_state_dict(text_score_layer_pos_params)
+            self.text_proj_sem.load_state_dict(text_proj_sem_params)
+            self.text_proj_pos.load_state_dict(text_proj_pos_params)
             self.cross_attention.load_state_dict(cross_attention_params)
         elif len(model_args) == 20:
             # Old checkpoint format with mlp_cov, mlp_dc, mlp_intrinsic_feature (backward compatibility)
@@ -331,6 +349,10 @@ class GaussianModel:
                 {'params': self.pos_mlp.parameters(), 'lr': training_args.mlp_lr, "name": "pos_mlp"},
                 {'params': self.att_layer.parameters(), 'lr': training_args.mlp_lr, "name": "att_layer"},
                 {'params': self.layer_norm.parameters(), 'lr': training_args.mlp_lr, "name": "layer_norm"},
+                {'params': self.text_score_layer_sem.parameters(), 'lr': training_args.mlp_lr, "name": "text_score_layer_sem"},
+                {'params': self.text_score_layer_pos.parameters(), 'lr': training_args.mlp_lr, "name": "text_score_layer_pos"},
+                {'params': self.text_proj_sem.parameters(), 'lr': training_args.mlp_lr, "name": "text_proj_sem"},
+                {'params': self.text_proj_pos.parameters(), 'lr': training_args.mlp_lr, "name": "text_proj_pos"},
                 {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
             ]
             self._xyz.requires_grad_(False)
