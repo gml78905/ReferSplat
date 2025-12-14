@@ -70,7 +70,7 @@ class GaussianModel:
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self._neighbor_indices = None  # KNN 결과 캐시 (xyz가 변하지 않으므로 한 번만 계산)
-        self._k_neighbors = 16  # KNN 이웃 개수
+        self._k_neighbors = 8  # KNN 이웃 개수
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
@@ -81,7 +81,7 @@ class GaussianModel:
 
         self.p_proj = nn.Linear(256, 128).to("cuda")  # 256차원을 128차원으로 projection
         self.cross_attention=CrossAttention(dim=128, num_heads=1).to("cuda")  # 128차원으로 변경
-        self.neighbor_self_attention = NeighborSelfAttention(feature_dim=128, num_heads=1).to("cuda")  # 이웃 features self-attention
+        self.neighbor_self_attention = NeighborSelfAttention(feature_dim=128).to("cuda")  # 이웃 features self-attention
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():

@@ -61,8 +61,9 @@ def aggregate_neighbor_features(geometry_features, neighbor_indices, pc, aggrega
     
     # Aggregate
     if aggregation == 'self_attention':
-        # Self-attention을 사용하여 학습 가능한 가중치로 aggregate
-        aggregated = pc.neighbor_self_attention(neighbor_features)  # (N, 128)
+        # Query-based attention을 사용하여 학습 가능한 가중치로 aggregate
+        # geometry_features를 query로 사용하여 메모리 효율적인 attention 계산
+        aggregated = pc.neighbor_self_attention(geometry_features, neighbor_features)  # (N, 128)
     elif aggregation == 'mean':
         aggregated = torch.mean(neighbor_features, dim=1)  # (N, 128)
     elif aggregation == 'max':
