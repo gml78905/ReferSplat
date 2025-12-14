@@ -65,7 +65,49 @@ class MLP2(nn.Module):
         x = F.relu(self.fc2(x))
         
         x = self.fc3(x)
-        return x 
+        return x  
+
+class IntrinsicEncoder(nn.Module):
+    """
+    Intrinsic feature encoder: 9 -> 64 -> 64 -> 16
+    Role: Encodes geometric (covariance) and appearance (color) cues into a semantic ID.
+    """
+    def __init__(self, in_dim=9, hidden_dim=64, out_dim=16):
+        super(IntrinsicEncoder, self).__init__()
+        
+        self.net = nn.Sequential(
+            # [중요 1] Input Normalization
+            # Covariance(-3~6)와 RGB(0~1)의 분포 차이를 해소합니다.
+            # 이것이 없으면 학습 초기 수렴이 매우 느리거나 불안정합니다.
+            nn.LayerNorm(in_dim),
+            
+            # Layer 1: Expansion & Feature Mixing
+            nn.Linear(in_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim), # Hidden Layer 분포 안정화
+            nn.GELU(),                # ReLU보다 부드러운 활성화 함수 (최신 트렌드)
+            
+            # [중요 2] Depth 추가 (Reasoning)
+            # 물리적 수치를 의미적 특징으로 바꾸려면 비선형성이 더 필요합니다.
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            
+            # Layer 3: Compression to f_int
+            nn.Linear(hidden_dim, out_dim)
+        )
+        
+        # [중요 3] 가중치 초기화
+        # 작은 네트워크일수록 초기화가 학습 속도에 영향을 줍니다.
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        return self.net(x)
     
 class MLP3(nn.Module):
     def __init__(self, in_dim=3, out_dim=128):
@@ -80,6 +122,5 @@ class MLP3(nn.Module):
         x = F.relu(self.fc2(x))
         
         x = self.fc3(x)
-        return x    
-
+        return x
 

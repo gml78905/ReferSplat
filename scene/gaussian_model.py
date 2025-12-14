@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention  
+from .cross_attention import MLP1,IntrinsicEncoder,MLP3,CrossAttention, MLP2
 
                        
 class GaussianModel:
@@ -47,12 +47,13 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self._language_feature = None
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.mlp2=MLP2(16,128).to("cuda")
+        self.intrinsic_encoder = IntrinsicEncoder(in_dim=9, hidden_dim=64, out_dim=16).to("cuda")
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
+        self.mlp2=MLP2(16,128).to("cuda")
+        # MLPs for language feature generation from covariance and features_dc
 
         
         self.max_radii2D = torch.empty(0)
@@ -88,14 +89,13 @@ class GaussianModel:
                 self._scaling,
                 self._rotation,
                 self._opacity,
-                self._language_feature,
                 self.max_radii2D,
                 self.xyz_gradient_accum,
                 self.denom,
                 self.optimizer.state_dict(),
                 self.spatial_lr_scale,
                 self.mlp1.state_dict(),
-                self.mlp2.state_dict(),
+                self.intrinsic_encoder.state_dict(),
                 self.mlp3.state_dict(),
                 self.cross_attention.state_dict(),
             )
@@ -117,6 +117,7 @@ class GaussianModel:
     
     def restore(self, model_args, training_args, mode='train'):
         if len(model_args) == 17:
+            # New checkpoint format without mlp_cov, mlp_dc, mlp_intrinsic_feature (using concat)
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -124,23 +125,22 @@ class GaussianModel:
             self._scaling, 
             self._rotation, 
             self._opacity,
-            self._language_feature,
             self.max_radii2D, 
             xyz_gradient_accum, 
             denom,
             opt_dict, 
             self.spatial_lr_scale,
-            #self.text_language_feature,
             mlp1_params,
-            mlp2_params,
+            intrinsic_encoder_params,
             mlp3_params,
             cross_attention_params,
             ) = model_args
             self.mlp1.load_state_dict(mlp1_params)
-            self.mlp2.load_state_dict(mlp2_params)
+            self.intrinsic_encoder.load_state_dict(intrinsic_encoder_params)
             self.mlp3.load_state_dict(mlp3_params)
             self.cross_attention.load_state_dict(cross_attention_params)
-        elif len(model_args) == 11: 
+        elif len(model_args) == 20:
+            # Old checkpoint format with mlp_cov, mlp_dc, mlp_intrinsic_feature (backward compatibility)
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -148,7 +148,33 @@ class GaussianModel:
             self._scaling, 
             self._rotation, 
             self._opacity,
-            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            mlp1_params,
+            intrinsic_encoder_params,
+            mlp3_params,
+            _,  # Ignored old mlp_cov_params
+            _,  # Ignored old mlp_dc_params
+            _,  # Ignored old mlp_intrinsic_feature_params
+            cross_attention_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.intrinsic_encoder.load_state_dict(intrinsic_encoder_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+        elif len(model_args) == 11: 
+            # Old checkpoint format (backward compatibility)
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            _,  # Ignored old _language_feature
             self.max_radii2D, 
             xyz_gradient_accum, 
             denom,
@@ -197,12 +223,50 @@ class GaussianModel:
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
-    @property
-    def get_language_feature(self):
-        if self._language_feature is not None:
-            return self._language_feature
-        else:
-            raise ValueError('没有设置language feature')
+    def get_intrinsic_feature(self):
+        """
+        Concatenate intrinsic features: covariance upper triangle (6), features_dc (3)
+        xyz는 사용하지 않습니다.
+        Total Dimension: 6 + 3 = 9
+        
+        Covariance matrix is computed from scaling and rotation: L @ L^T where L = S * R
+        Returns tensor of shape (N, 9)
+        """
+        features_dc = self._features_dc.reshape(-1, 3)  # (N, 3)
+        rgb_features = torch.sigmoid(features_dc)
+        
+        # 1. Scaling & Rotation 가져오기
+        scaling = self.get_scaling    # (N, 3)
+        rotation = self.get_rotation  # (N, 4)
+        
+        # 2. Covariance Matrix 계산 (3x3)
+        from utils.general_utils import build_scaling_rotation
+        L = build_scaling_rotation(scaling, rotation)  # (N, 3, 3)
+        
+        # Sigma = L * L^T = R S S^T R^T
+        covariance = L @ L.transpose(1, 2)  # (N, 3, 3)
+        
+        # 3. Extract Upper Triangle (6 elements)
+        # 공분산 행렬은 대칭이므로 (0,1)==(1,0) 입니다. 
+        # 따라서 상삼각 요소 6개만 뽑으면 모든 정보를 담게 됩니다.
+        # 순서: xx, xy, xz, yy, yz, zz
+        
+        cov_xx = covariance[:, 0, 0]
+        cov_xy = covariance[:, 0, 1]
+        cov_xz = covariance[:, 0, 2]
+        cov_yy = covariance[:, 1, 1]
+        cov_yz = covariance[:, 1, 2]
+        cov_zz = covariance[:, 2, 2]
+        
+        # (N, 6) 형태로 쌓기
+        triu_idx = torch.triu_indices(3, 3, device=covariance.device)
+        covariance_upper = covariance[:, triu_idx[0], triu_idx[1]] # (N, 6)
+        
+        # 4. Concat (6 + 3 = 9)
+        intrinsic_feature = torch.cat([covariance_upper, rgb_features], dim=1)  # (N, 9)
+        
+        return intrinsic_feature
+    
     @property
     def get_text_language_feature(self):
         if self.text_language_feature is not None:
@@ -249,16 +313,11 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         
         if training_args.include_feature:
-            if self._language_feature is None or self._language_feature.shape[0] != self._xyz.shape[0]:
-                language_feature = torch.zeros((self._xyz.shape[0], 16), device="cuda")
-                self._language_feature = nn.Parameter(language_feature.requires_grad_(True))
-                
             l = [
-                {'params': [self._language_feature], 'lr': training_args.language_feature_lr, "name": "language_feature"},
-                 {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
-                 {'params': self.mlp2.parameters(), 'lr': training_args.mlp_lr, "name": "mlp2"},
-                 {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
-                 {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
+                {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
+                {'params': self.intrinsic_encoder.parameters(), 'lr': training_args.mlp_lr, "name": "intrinsic_encoder"},
+                {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
+                {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)
@@ -284,7 +343,6 @@ class GaussianModel:
         for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
             l.append('f_rest_{}'.format(i))
         l.append('opacity')
-        # l.append('language_feature')
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
@@ -398,7 +456,6 @@ class GaussianModel:
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
-        # self._language_feature = optimizable_tensors["language_feature"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
