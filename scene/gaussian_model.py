@@ -49,7 +49,7 @@ class GaussianModel:
         self._opacity = torch.empty(0)
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.intrinsic_encoder = IntrinsicEncoder(in_dim=9, hidden_dim=64, out_dim=16).to("cuda")
+        self.intrinsic_encoder = IntrinsicEncoder(in_dim=9, hidden_dim=64, out_dim=128).to("cuda")
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
         self.mlp2=MLP2(16,128).to("cuda")

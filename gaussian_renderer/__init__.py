@@ -86,7 +86,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     p=F.normalize(p,dim=-1)
     intrinsic_feature=pc.get_intrinsic_feature()  # Covariance와 features_dc로부터 생성 (N, 9)
     intrinsic_feature=pc.intrinsic_encoder(intrinsic_feature)  # (N, 9) -> (N, 16) - Intrinsic_encoder
-    intrinsic_feature=pc.mlp2(intrinsic_feature)
+    # intrinsic_feature=pc.mlp2(intrinsic_feature)
     g=pc.cross_attention(intrinsic_feature,p,t_token)
     features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
     features=features.sum(dim=-1,keepdim=True)
