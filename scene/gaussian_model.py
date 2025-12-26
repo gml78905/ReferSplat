@@ -49,7 +49,7 @@ class GaussianModel:
         self._opacity = torch.empty(0)
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
-        self.intrinsic_encoder = IntrinsicEncoder(in_dim=9, hidden_dim=64, out_dim=16).to("cuda")
+        self.intrinsic_encoder = IntrinsicEncoder(in_dim=10, hidden_dim=64, out_dim=16).to("cuda")
         self.pos_mlp=PositionalEncoding(3,16).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
         # Attention layer for neighbor features: [f_i || f_j || pos_emb] -> attention score
@@ -57,6 +57,8 @@ class GaussianModel:
         self.att_layer = nn.Linear(48, 1).to("cuda")
         # Layer normalization for fused neighbor features (f_ctx: (N, 16))
         self.layer_norm = nn.LayerNorm(16).to("cuda")
+        # f_ctx projection: (N, 16) -> (N, 128) for dot product with t_token
+        self.f_ctx_proj = nn.Linear(16, 128).to("cuda")
         # Phase 3: Decoupled Spatial-Semantic Matching Module
         # text_dim = 128 (mlp1 output), feature_dim = 16
         self.text_score_layer_sem = nn.Linear(128, 1).to("cuda")  # Token importance scoring for semantic
@@ -115,6 +117,7 @@ class GaussianModel:
                 self.text_score_layer_pos.state_dict(),
                 self.text_proj_sem.state_dict(),
                 self.text_proj_pos.state_dict(),
+                self.f_ctx_proj.state_dict(),
                 self.cross_attention.state_dict(),
             )
         else:
@@ -134,7 +137,7 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 23:
+        if len(model_args) == 24:
             # New checkpoint format without mlp_cov, mlp_dc, mlp_intrinsic_feature (using concat)
             (self.active_sh_degree, 
             self._xyz, 
@@ -157,6 +160,7 @@ class GaussianModel:
             text_score_layer_pos_params,
             text_proj_sem_params,
             text_proj_pos_params,
+            f_ctx_proj_params,
             cross_attention_params,
             ) = model_args
             self.mlp1.load_state_dict(mlp1_params)
@@ -168,6 +172,7 @@ class GaussianModel:
             self.text_score_layer_pos.load_state_dict(text_score_layer_pos_params)
             self.text_proj_sem.load_state_dict(text_proj_sem_params)
             self.text_proj_pos.load_state_dict(text_proj_pos_params)
+            self.f_ctx_proj.load_state_dict(f_ctx_proj_params)
             self.cross_attention.load_state_dict(cross_attention_params)
         elif len(model_args) == 20:
             # Old checkpoint format with mlp_cov, mlp_dc, mlp_intrinsic_feature (backward compatibility)
@@ -255,12 +260,12 @@ class GaussianModel:
     
     def get_intrinsic_feature(self):
         """
-        Concatenate intrinsic features: covariance upper triangle (6), features_dc (3)
+        Concatenate intrinsic features: covariance upper triangle (6), features_dc (3), opacity (1)
         xyz는 사용하지 않습니다.
-        Total Dimension: 6 + 3 = 9
+        Total Dimension: 6 + 3 + 1 = 10
         
         Covariance matrix is computed from scaling and rotation: L @ L^T where L = S * R
-        Returns tensor of shape (N, 9)
+        Returns tensor of shape (N, 10)
         """
         features_dc = self._features_dc.reshape(-1, 3)  # (N, 3)
         rgb_features = torch.sigmoid(features_dc)
@@ -291,9 +296,14 @@ class GaussianModel:
         # (N, 6) 형태로 쌓기
         triu_idx = torch.triu_indices(3, 3, device=covariance.device)
         covariance_upper = covariance[:, triu_idx[0], triu_idx[1]] # (N, 6)
+
+        covariance_norm = torch.tanh(covariance_upper * 10.0)
         
-        # 4. Concat (6 + 3 = 9)
-        intrinsic_feature = torch.cat([covariance_upper, rgb_features], dim=1)  # (N, 9)
+        # 4. Opacity 가져오기 (이미 sigmoid 적용됨, 0~1 범위)
+        opacity = self.get_opacity  # (N, 1)
+        
+        # 5. Concat (6 + 3 + 1 = 10)
+        intrinsic_feature = torch.cat([covariance_norm, rgb_features, opacity], dim=1)  # (N, 10)
         
         return intrinsic_feature
     
@@ -353,6 +363,7 @@ class GaussianModel:
                 {'params': self.text_score_layer_pos.parameters(), 'lr': training_args.mlp_lr, "name": "text_score_layer_pos"},
                 {'params': self.text_proj_sem.parameters(), 'lr': training_args.mlp_lr, "name": "text_proj_sem"},
                 {'params': self.text_proj_pos.parameters(), 'lr': training_args.mlp_lr, "name": "text_proj_pos"},
+                {'params': self.f_ctx_proj.parameters(), 'lr': training_args.mlp_lr, "name": "f_ctx_proj"},
                 {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
             ]
             self._xyz.requires_grad_(False)

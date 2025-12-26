@@ -27,7 +27,7 @@ def fuse_neighbor_features(pc, neighbor_indices):
         f_ctx: (N, 16) 주변 맥락 정보가 융합된 intrinsic feature
     """
     # 1. Intrinsic feature 계산
-    intrinsic_feature = pc.get_intrinsic_feature()  # (N, 9)
+    intrinsic_feature = pc.get_intrinsic_feature()  # (N, 10)
     intrinsic_feature = pc.intrinsic_encoder(intrinsic_feature)  # (N, 16)
     
     # 2. 상대 위치 계산 및 Positional Encoding
@@ -167,69 +167,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # 주변 가우시안 정보와 융합
     f_ctx = fuse_neighbor_features(pc, neighbor_indices)  # (N, 16)
     
-    # Phase 3: Decoupled Spatial-Semantic Matching Module
-    # Branch 1: Semantic Reasoning
-    # t_token: (seq_len, 128) - 각 토큰의 embedding
-    # 1. 점수 계산: 각 단어(토큰)가 얼마나 중요한지 점수를 매김
-    # score = Linear(T_emb) -> (seq_len, 1)
-    t_token = t_token.squeeze(0)
-    score = pc.text_score_layer_sem(t_token)  # (seq_len, 1)
-    score = score.squeeze(-1)  # (seq_len,)
+    # f_ctx를 128차원으로 projection (t_token과 차원 맞추기)
+    f_ctx_128 = pc.f_ctx_proj(f_ctx)  # (N, 16) -> (N, 128)
     
-    # 2. 가중치 변환: Softmax를 취해 합이 1이 되도록 만듦
-    # alpha = Softmax(score) -> (seq_len,)
-    alpha = F.softmax(score, dim=0)  # (seq_len,)
+    # t_token: (1, seq_len, 128) -> (seq_len, 128)
+    t_token = t_token.squeeze(0)  # (seq_len, 128)
     
-    # 3. 가중 합: 가중치만큼 곱해서 더함
-    # T_final = sum(alpha * T_emb) -> (1, 128)
-    # 메모리 효율: 브로드캐스팅으로 직접 계산
-    T_emb_weighted = alpha.unsqueeze(-1) * t_token  # (seq_len, 128)
-    T_final = torch.sum(T_emb_weighted, dim=0, keepdim=True)  # (1, 128)
+    # 단순 내적: f_ctx_128 (N, 128)와 t_token (seq_len, 128)
+    # (N, 128) x (128, seq_len) = (N, seq_len)
+    features_per_token = torch.matmul(f_ctx_128, t_token.transpose(-1, -2))  # (N, seq_len)
     
-    # T_final -> text_proj_sem -> T_sem
-    T_sem = pc.text_proj_sem(T_final)  # (1, 16)
-    T_sem = F.normalize(T_sem, dim=-1)  # L2 normalize
-    
-    # 메모리 최적화: 중간 텐서 삭제
-    # del score, alpha, T_emb_weighted, T_final
-    
-    # Cosine Similarity: f_ctx (N, 16) vs T_sem (1, 16)
-    # 메모리 효율: 브로드캐스팅으로 직접 계산 (큰 텐서 생성 방지)
-    f_ctx_norm = F.normalize(f_ctx, dim=-1)  # (N, 16)
-    S_sem = torch.sigmoid(torch.sum(f_ctx_norm * T_sem, dim=-1))  # (N,) - 브로드캐스팅
-    
-    # Branch 2: Spatial Reasoning
-    # 좌표 입력 -> PositionalEncoding -> f_pos (N, 16)
-    xyz = pc.get_xyz  # (N, 3)
-    f_pos = pc.pos_mlp(xyz)  # (N, 16) - PositionalEncoding
-    f_pos = F.normalize(f_pos, dim=-1)  # L2 normalize
-    
-    # t_token에 대해 spatial용 별도 attention 가중치 계산
-    # text_score_layer_pos를 사용하여 spatial에 중요한 토큰에 더 높은 가중치 부여
-    score_pos = pc.text_score_layer_pos(t_token)  # (seq_len, 1)
-    score_pos = score_pos.squeeze(-1)  # (seq_len,)
-    alpha_pos = F.softmax(score_pos, dim=0)  # (seq_len,)
-    T_emb_weighted_pos = alpha_pos.unsqueeze(-1) * t_token  # (seq_len, 128)
-    T_final_pos = torch.sum(T_emb_weighted_pos, dim=0, keepdim=True)  # (1, 128)
-    
-    T_pos = pc.text_proj_pos(T_final_pos)  # (1, 16)
-    
-    # 메모리 최적화: 중간 텐서 삭제
-    del score_pos, alpha_pos, T_emb_weighted_pos, T_final_pos
-    T_pos = F.normalize(T_pos, dim=-1)  # L2 normalize
-    
-    # Cosine Similarity: f_pos (N, 16) vs T_pos (1, 16)
-    # 메모리 효율: 브로드캐스팅으로 직접 계산
-    S_pos = torch.sigmoid(torch.sum(f_pos * T_pos, dim=-1))  # (N,) - 브로드캐스팅
-    
-    # Final Fusion
-    final_score = S_sem * S_pos  # (N,)
-    
-    # 메모리 최적화: 중간 텐서 삭제
-    del T_sem, T_pos, f_ctx_norm, f_pos
-    
-    # final_score를 features로 사용 (rasterizer에 전달)
-    features = final_score.unsqueeze(-1)  # (N, 1)
+    # 모든 토큰에 대해 평균 (또는 합) - logit 값 생성
+    features = features_per_token.sum(dim=-1, keepdim=True)  # (N, 1)
     
     
     sorted_indices = torch.argsort(features, descending=True)
@@ -248,7 +197,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # pos_emb = pc.pos_mlp(delta_p)  # (N, K, 16)
     
     # # Attention weights로 pos_emb를 가중 평균하여 p 생성
-    # intrinsic_feature = pc.get_intrinsic_feature()  # (N, 9)
+    # intrinsic_feature = pc.get_intrinsic_feature()  # (N, 10)
     # intrinsic_feature = pc.intrinsic_encoder(intrinsic_feature)  # (N, 16)
     # f_i = intrinsic_feature.unsqueeze(1).expand(-1, k_neighbors, -1)  # (N, K, 16)
     # f_j = intrinsic_feature[neighbor_indices]  # (N, K, 16)
