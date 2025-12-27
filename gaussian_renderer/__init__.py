@@ -173,12 +173,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # t_token: (1, seq_len, 128) -> (seq_len, 128)
     t_token = t_token.squeeze(0)  # (seq_len, 128)
     
-    # 단순 내적: f_ctx_128 (N, 128)와 t_token (seq_len, 128)
-    # (N, 128) x (128, seq_len) = (N, seq_len)
-    features_per_token = torch.matmul(f_ctx_128, t_token.transpose(-1, -2))  # (N, seq_len)
+    # Cosine similarity 사용 (정규화 후 내적)
+    # 1. L2 정규화
+    f_ctx_norm = F.normalize(f_ctx_128, dim=-1)  # (N, 128)
+    t_token_norm = F.normalize(t_token, dim=-1)  # (seq_len, 128)
     
-    # 모든 토큰에 대해 평균 (또는 합) - logit 값 생성
-    features = features_per_token.sum(dim=-1, keepdim=True)  # (N, 1)
+    # 2. Cosine similarity: (N, 128) x (128, seq_len) = (N, seq_len)
+    # 값 범위: [-1, 1]
+    cosine_sim_per_token = torch.matmul(f_ctx_norm, t_token_norm.transpose(-1, -2))  # (N, seq_len)
+    
+    # 3. 모든 토큰에 대해 평균 - logit 값 생성
+    # mean을 사용하여 seq_len에 비례하지 않도록 함
+    features = cosine_sim_per_token.mean(dim=-1, keepdim=True)  # (N, 1)
     
     
     sorted_indices = torch.argsort(features, descending=True)
