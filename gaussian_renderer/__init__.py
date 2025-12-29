@@ -86,25 +86,48 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     p=F.normalize(p,dim=-1)
     x=pc.mlp2(pc._language_feature)
     g=pc.cross_attention(x,p,t_token)
-    features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
-    features=features.sum(dim=-1,keepdim=True)
-
+    features_per_token=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)  # (N, num_tokens)
     
-    sorted_indices = torch.argsort(features, descending=True)
+    # 각 토큰별로 렌더링
+    num_tokens = features_per_token.shape[1]
+    token_images = []
+    
+    for token_idx in range(num_tokens):
+        # 각 토큰의 feature를 (N, 1) 형태로 변환
+        token_feature = features_per_token[:, token_idx:token_idx+1]  # (N, 1)
+        
+        # 각 토큰별로 렌더링
+        rendered_image, language_feature_image, radii = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = colors_precomp,
+            language_feature_precomp = token_feature,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp)
+        
+        token_images.append({
+            "render": rendered_image,
+            "language_feature_image": language_feature_image,
+            "token_idx": token_idx
+        })
+    
+    # 전체 합산 feature도 계산 (기존 방식)
+    features_sum = features_per_token.sum(dim=-1, keepdim=True)
+    sorted_indices = torch.argsort(features_sum, descending=True)
     indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
-   
     selected_tensors = g[indices]
-
     mean_tensor = torch.mean(selected_tensors, dim=0, keepdim=True)
-
     
-
+    # 전체 합산으로도 렌더링
     rendered_image, language_feature_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
         colors_precomp = colors_precomp,
-        language_feature_precomp = features,
+        language_feature_precomp = features_sum,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
@@ -115,4 +138,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "mean_tensor": mean_tensor}
+            "mean_tensor": mean_tensor,
+            "token_images": token_images,  # 각 토큰별 렌더링 결과
+            "features_per_token": features_per_token}  # 각 토큰별 feature 값

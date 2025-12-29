@@ -14,6 +14,7 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import matplotlib.cm as cm
 
 def overlay_mask_with_boundary(original_image, mask, boundary_color=[1.0, 1.0, 0.0], darken_factor=0.3, boundary_width=2):
     """
@@ -97,6 +98,9 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
     gts_npy_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_npy")
     overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_overlay")
     gt_overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_overlay")
+    token_images_path = os.path.join(model_path, name, "ours_{}".format(iteration), "token_images")
+    token_images_render_path = os.path.join(token_images_path, "render")
+    token_images_overlay_path = os.path.join(token_images_path, "overlay")
 
     makedirs(render_npy_path, exist_ok=True)
     makedirs(gts_npy_path, exist_ok=True)
@@ -104,6 +108,8 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
     makedirs(gts_path, exist_ok=True)
     makedirs(overlay_path, exist_ok=True)
     makedirs(gt_overlay_path, exist_ok=True)
+    makedirs(token_images_render_path, exist_ok=True)
+    makedirs(token_images_overlay_path, exist_ok=True)
     ans=0
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         for i in range(len(view.sentence)):
@@ -135,6 +141,67 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
             # GT 마스크 오버레이: 마스크 외부 어둡게, 경계 강조 (노란색 경계)
             gt_overlay_image = overlay_mask_with_boundary(original_image, gt, boundary_color=[1.0, 1.0, 0.0], darken_factor=0.3, boundary_width=2)
             torchvision.utils.save_image(gt_overlay_image, os.path.join(gt_overlay_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
+            
+            # 각 토큰별 이미지 저장 (디버깅용)
+            if "token_images" in output and output["token_images"] is not None:
+                # 토큰 단어 정보 가져오기
+                tokenized = gaussians.tokenizer(view.sentence[i], return_tensors="pt", truncation=True, padding=True)
+                token_ids = tokenized["input_ids"][0][1:-1]  # [CLS]와 [SEP] 제외
+                token_words = [gaussians.tokenizer.decode([tid]) for tid in token_ids]
+                
+                for token_result in output["token_images"]:
+                    token_idx = token_result["token_idx"]
+                    token_image = token_result["language_feature_image"]
+                    
+                    # 토큰 이미지 처리: sigmoid 적용 후 0-1로 정규화
+                    token_image_processed = torch.sigmoid(token_image)  # (1, H, W)
+                    
+                    # 값에 따라 색상 맵 적용 (jet colormap: 파란색(낮음) -> 빨간색(높음))
+                    # 1. 값을 0-1로 정규화 (이미 sigmoid로 0-1 범위)
+                    token_normalized = token_image_processed.squeeze(0).cpu().numpy()  # (H, W)
+                    
+                    # 2. matplotlib colormap 적용
+                    colormap = cm.get_cmap('jet')  # jet: 파란색 -> 초록 -> 노랑 -> 빨강
+                    token_colored = colormap(token_normalized)[:, :, :3]  # (H, W, 3) RGB, alpha 제거
+                    token_colored = torch.from_numpy(token_colored).permute(2, 0, 1).float()  # (3, H, W)
+                    token_colored = token_colored.to(token_image.device)
+                    
+                    # 파일명: {이미지번호}_{카테고리}_token{인덱스}_{단어}.png
+                    token_word = token_words[token_idx] if token_idx < len(token_words) else f"token{token_idx}"
+                    # 파일명에 특수문자 제거
+                    token_word_clean = token_word.replace(" ", "_").replace(".", "").replace(",", "")
+                    filename = '{0:05d}_{1}_token{2}_{3}.png'.format(number_int, view.category[i], token_idx, token_word_clean)
+                    
+                    # 토큰별 이미지 저장 (render 폴더) - 색상 맵 적용
+                    torchvision.utils.save_image(token_colored, os.path.join(token_images_render_path, filename))
+                    
+                    # 토큰별 오버레이 이미지 저장 (overlay 폴더) - 원본 이미지에 색상 맵 오버레이
+                    # 색상 맵을 alpha 채널과 함께 사용
+                    token_alpha = token_image_processed.squeeze(0)  # (H, W)
+                    token_overlay = original_image * (1 - token_alpha.unsqueeze(0)) + token_colored * token_alpha.unsqueeze(0)
+                    torchvision.utils.save_image(token_overlay, os.path.join(token_images_overlay_path, filename))
+                
+                # 전체 sum 결과도 저장 (디버깅용)
+                if args.include_feature:
+                    sum_image = output["language_feature_image"]
+                    sum_image_processed = torch.sigmoid(sum_image)  # (1, H, W)
+                    
+                    # 값에 따라 색상 맵 적용
+                    sum_normalized = sum_image_processed.squeeze(0).cpu().numpy()  # (H, W)
+                    colormap = cm.get_cmap('jet')
+                    sum_colored = colormap(sum_normalized)[:, :, :3]  # (H, W, 3) RGB
+                    sum_colored = torch.from_numpy(sum_colored).permute(2, 0, 1).float()  # (3, H, W)
+                    sum_colored = sum_colored.to(sum_image.device)
+                    
+                    sum_filename = '{0:05d}_{1}_sum_all_tokens.png'.format(number_int, view.category[i])
+                    
+                    # 전체 sum 이미지 저장 (render 폴더) - 색상 맵 적용
+                    torchvision.utils.save_image(sum_colored, os.path.join(token_images_render_path, sum_filename))
+                    
+                    # 전체 sum 오버레이 이미지 저장 (overlay 폴더)
+                    sum_alpha = sum_image_processed.squeeze(0)  # (H, W)
+                    sum_overlay = original_image * (1 - sum_alpha.unsqueeze(0)) + sum_colored * sum_alpha.unsqueeze(0)
+                    torchvision.utils.save_image(sum_overlay, os.path.join(token_images_overlay_path, sum_filename))
                
                
 def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, skip_train : bool, skip_test : bool, args):
@@ -151,7 +218,8 @@ def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, ski
         iteration = args.iteration
         
         # if not skip_train:
-        #      render_set(dataset.model_path, dataset.source_path, "render_train", iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
+        #     render_name = os.path.join("render_train", args.name, str(args.run_number))
+        #     render_set(dataset.model_path, dataset.source_path, render_name, iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
 
         if not skip_test:
              # 렌더링 결과 경로: render/{name}/{run_number}/...

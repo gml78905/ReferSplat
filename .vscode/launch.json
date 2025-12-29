@@ -83,7 +83,7 @@
                 "-m",
                 "/ws/data/Ref-lerf/train/ramen",
                 "--name",
-                "origin_test",
+                "ㅡ먀",
                 "--iteration",
                 "2"
             ],
@@ -103,7 +103,7 @@
                 "-m",
                 "/ws/data/Ref-lerf/train/ramen",
                 "--name",
-                "origin_test",
+                "main",
                 "--iteration",
                 "3"
             ],
