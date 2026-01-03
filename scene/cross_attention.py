@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads):
@@ -81,5 +82,104 @@ class MLP3(nn.Module):
         
         x = self.fc3(x)
         return x    
+
+class AttributeEncoder(nn.Module):
+    """
+    Attribute Encoder: 가우시안의 모든 속성을 인코딩
+    Input: xyz, scale, rot, opacity, sh
+    Output: 128 channels
+    """
+    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+        super().__init__()
+        # Positional Encoding 설정
+        self.L = 10
+        self.pe_channels = 3 * 2 * self.L  # 60
+        
+        # MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim)
+            # 필요시 LayerNorm 추가 가능
+        )
+    
+    def positional_encoding(self, xyz):
+        """Vectorized Positional Encoding"""
+        # xyz: [N, 3]
+        B, _ = xyz.shape
+        device = xyz.device
+        
+        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
+        # [L] -> [1, L]
+        bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
+        
+        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
+        # coord * freq * pi
+        x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
+        
+        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
+        sin_x = torch.sin(x)
+        cos_x = torch.cos(x)
+        pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
+        return pe
+    
+    def forward(self, xyz, scale, rot, opacity, sh):
+        """
+        메인 코드에서 복잡하게 cat하지 말고, 속성만 넘겨주면 알아서 처리
+        """
+        # 1. Position Encoding (60ch)
+        pos_encoded = self.positional_encoding(xyz)
+        
+        # 2. SH Flatten (48ch)
+        # sh input: [N, 16, 3] or [N, 48] 유연하게 처리
+        if sh.dim() == 3:
+            sh = sh.reshape(sh.shape[0], -1)
+            
+        # 3. Concatenation (116ch)
+        # xyz_encoded(60) + sh(48) + scale(3) + rot(4) + opacity(1)
+        x = torch.cat([pos_encoded, sh, scale, rot, opacity], dim=1)
+        
+        # 4. MLP
+        return self.mlp(x)
+
+class ATGM(nn.Module):
+    """
+    Attribute-Text Gating Module: 3D 특징과 텍스트 특징을 결합하여 유사도 계산
+    """
+    def __init__(self, dim=128):
+        super().__init__()
+        self.gate_mlp = nn.Linear(dim, dim)  # Text -> Gate
+    
+    def forward(self, f_3d, f_text):
+        """
+        Args:
+            f_3d: [N, 128] - 3D 가우시안 특징
+            f_text: [1, T, 128] or [T, 128] - 텍스트 토큰 특징
+        
+        Returns:
+            scores: [N, 1] - 각 가우시안과 텍스트의 유사도
+        """
+        # 1. 문장 임베딩 추출 (Pooling Strategy)
+        if f_text.dim() == 3:
+            # BERT의 경우: 0번째 토큰이 [CLS] (문장 전체 요약)
+            # 평균(mean) 대신 [CLS]를 사용합니다.
+            sentence_emb = f_text[:, 0, :] # [1, 128]
+            
+            # (옵션) 만약 CLIP이라면: CLIP은 자체적인 pooled output을 제공하므로 그걸 쓰는게 좋음
+            # (옵션) 만약 평균을 꼭 써야 한다면: Attention Pooling이 Mean보다 좋음
+        else:
+            sentence_emb = f_text # 이미 [1, 128]로 들어온 경우
+        
+        # f_3d: [N, 128], f_text: [1, 128]
+        # 1. Gating
+        gate = torch.sigmoid(self.gate_mlp(sentence_emb))  # [1, 128]
+        f_modulated = f_3d * gate  # [N, 128]
+        
+        # 2. Cosine Similarity
+        f_mod_norm = F.normalize(f_modulated, p=2, dim=1)
+        text_norm = F.normalize(sentence_emb, p=2, dim=1)
+        scores = torch.sum(f_mod_norm * text_norm, dim=1, keepdim=True)
+        
+        return scores  # [N, 1]
 
 

@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention  
+from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,AttributeEncoder,ATGM  
 
                        
 class GaussianModel:
@@ -53,6 +53,8 @@ class GaussianModel:
         self.mlp2=MLP2(16,128).to("cuda")
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
+        self.attribute_encoder=AttributeEncoder(116, 256, 128).to("cuda")  # Input: 116, Hidden: 256, Output: 128
+        self.atgm=ATGM(dim=128).to("cuda")  # Attribute-Text Gating Module
 
         
         self.max_radii2D = torch.empty(0)
@@ -62,6 +64,8 @@ class GaussianModel:
         self.scheduler = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self._static_neighbor_indices = None  # 고정된 XYZ 좌표 기반 KNN 인덱스 캐시
+        self._static_neighbor_weights = None  # 고정된 XYZ 좌표 기반 KNN 가중치 캐시
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
@@ -259,6 +263,8 @@ class GaussianModel:
                  {'params': self.mlp2.parameters(), 'lr': training_args.mlp_lr, "name": "mlp2"},
                  {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
                  {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
+                 {'params': self.attribute_encoder.parameters(), 'lr': training_args.mlp_lr, "name": "attribute_encoder"},
+                 {'params': self.atgm.parameters(), 'lr': training_args.mlp_lr, "name": "atgm"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)
