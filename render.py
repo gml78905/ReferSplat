@@ -14,6 +14,8 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 def overlay_mask_with_boundary(original_image, mask, boundary_color=[1.0, 1.0, 0.0], darken_factor=0.3, boundary_width=2):
     """
@@ -90,6 +92,77 @@ def overlay_mask_with_boundary(original_image, mask, boundary_color=[1.0, 1.0, 0
     return result
 
 
+def create_heatmap(feature_map, colormap='jet', alpha=0.8):
+    """
+    Feature map을 heatmap으로 변환합니다.
+    
+    Args:
+        feature_map: [1, H, W] 또는 [H, W] 텐서 (logits 또는 확률값)
+        colormap: matplotlib colormap 이름 (기본값: 'jet')
+        alpha: 투명도 (0~1)
+    
+    Returns:
+        [3, H, W] 텐서 (RGB heatmap)
+    """
+    # 차원 정규화
+    if feature_map.dim() == 3:
+        if feature_map.shape[0] == 1:
+            feature_map = feature_map.squeeze(0)
+        else:
+            feature_map = feature_map[0]
+    
+    # CPU로 이동하고 numpy로 변환
+    feature_np = feature_map.detach().cpu().numpy()
+    
+    # Min-Max 정규화 (0~1 범위로)
+    f_min = feature_np.min()
+    f_max = feature_np.max()
+    if f_max - f_min > 1e-6:
+        feature_norm = (feature_np - f_min) / (f_max - f_min)
+    else:
+        feature_norm = feature_np * 0  # 모든 값이 같으면 0으로
+    
+    # Colormap 적용
+    try:
+        # 최신 matplotlib 버전 (3.5+)
+        import matplotlib
+        if hasattr(matplotlib, 'colormaps'):
+            cmap = matplotlib.colormaps[colormap]
+        else:
+            cmap = cm.get_cmap(colormap)
+    except (KeyError, AttributeError):
+        # 구버전 호환성
+        cmap = cm.get_cmap(colormap)
+    heatmap_rgba = cmap(feature_norm)  # [H, W, 4] (RGBA)
+    
+    # RGB만 추출하고 [3, H, W]로 변환
+    heatmap_rgb = heatmap_rgba[:, :, :3]  # [H, W, 3]
+    heatmap_tensor = torch.from_numpy(heatmap_rgb).permute(2, 0, 1).float()  # [3, H, W]
+    
+    return heatmap_tensor
+
+
+def overlay_heatmap_on_image(original_image, heatmap, alpha=0.6):
+    """
+    원본 이미지에 heatmap을 오버레이합니다.
+    
+    Args:
+        original_image: [3, H, W] 텐서 (원본 이미지, 0~1 범위)
+        heatmap: [3, H, W] 텐서 (heatmap, 0~1 범위)
+        alpha: heatmap 투명도 (0~1)
+    
+    Returns:
+        [3, H, W] 텐서 (오버레이된 이미지)
+    """
+    device = original_image.device
+    heatmap = heatmap.to(device)
+    
+    # Alpha blending
+    overlay = alpha * heatmap + (1 - alpha) * original_image
+    
+    return overlay
+
+
 def render_set(model_path, source_path, name, iteration, views, gaussians, pipeline, background, args,model=None):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
@@ -97,6 +170,8 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
     gts_npy_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_npy")
     overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_overlay")
     gt_overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_overlay")
+    heatmap_path = os.path.join(model_path, name, "ours_{}".format(iteration), "heatmaps")
+    heatmap_overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "heatmap_overlays")
 
     makedirs(render_npy_path, exist_ok=True)
     makedirs(gts_npy_path, exist_ok=True)
@@ -104,6 +179,8 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
     makedirs(gts_path, exist_ok=True)
     makedirs(overlay_path, exist_ok=True)
     makedirs(gt_overlay_path, exist_ok=True)
+    makedirs(heatmap_path, exist_ok=True)
+    makedirs(heatmap_overlay_path, exist_ok=True)
     ans=0
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         for i in range(len(view.sentence)):
@@ -112,23 +189,33 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
             number = re.findall(r'\d+', sn)
             number_int = int(number[0])
             output = render(view, gaussians, pipeline, background, args,sentence=view.sentence[i])
+            # 원본 이미지 가져오기 (한 번만)
+            original_image = view.original_image[0:3, :, :].to("cuda")
+            
             if not args.include_feature:
                 rendering = output["render"]
+                gt = view.original_image[0:3, :, :]
             else:
                 rendering = output["language_feature_image"]
                 # rendering = torch.sigmoid(rendering)
                 rendering = (rendering>=0.5).float()
+                gt = view.gt_mask[view.category[i]]
                 
-            if not args.include_feature:
-                gt = view.original_image[0:3, :, :]
+                # Heatmap 생성 (language_feature_image의 원본 logits 사용)
+                language_feature_logits = output["language_feature_image"]  # [1, H, W] 또는 [H, W]
+                heatmap = create_heatmap(language_feature_logits, colormap='jet', alpha=0.8)
                 
-            else:
-                gt=view.gt_mask[view.category[i]] 
+                # Heatmap만 저장
+                torchvision.utils.save_image(heatmap, os.path.join(heatmap_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
+                
+                # 원본 이미지에 heatmap 오버레이
+                heatmap_overlay = overlay_heatmap_on_image(original_image, heatmap, alpha=0.6)
+                torchvision.utils.save_image(heatmap_overlay, os.path.join(heatmap_overlay_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
+                
             np.save(os.path.join(render_npy_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".npy"),rendering.permute(1,2,0).cpu().numpy())
             np.save(os.path.join(gts_npy_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".npy"),gt.permute(1,2,0).cpu().numpy())
             torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
             torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
-            original_image = view.original_image[0:3, :, :].to(rendering.device)
             # 예측 마스크 오버레이: 마스크 외부 어둡게, 경계 강조 (노란색 경계)
             overlay_image = overlay_mask_with_boundary(original_image, rendering, boundary_color=[1.0, 1.0, 0.0], darken_factor=0.3, boundary_width=2)
             torchvision.utils.save_image(overlay_image, os.path.join(overlay_path, '{0:05d}'.format(number_int) + '{}'.format(view.category[i])+".png"))
@@ -151,7 +238,8 @@ def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, ski
         iteration = args.iteration
         
         # if not skip_train:
-        #      render_set(dataset.model_path, dataset.source_path, "render_train", iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
+        #     render_name = os.path.join("render_train", args.name, str(args.run_number))
+        #     render_set(dataset.model_path, dataset.source_path, render_name, iteration, scene.getTrainCameras(), gaussians, pipeline, background, args)
 
         if not skip_test:
              # 렌더링 결과 경로: render/{name}/{run_number}/...
