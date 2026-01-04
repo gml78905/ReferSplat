@@ -94,6 +94,8 @@ class AttributeEncoder(nn.Module):
         # Positional Encoding 설정
         self.L = 10
         self.pe_channels = 3 * 2 * self.L  # 60
+
+        self.input_norm = nn.LayerNorm(input_dim)
         
         # MLP
         self.mlp = nn.Sequential(
@@ -127,8 +129,12 @@ class AttributeEncoder(nn.Module):
         """
         메인 코드에서 복잡하게 cat하지 말고, 속성만 넘겨주면 알아서 처리
         """
+
+        xyz_normalized = xyz / 4.0
+
+
         # 1. Position Encoding (60ch)
-        pos_encoded = self.positional_encoding(xyz)
+        pos_encoded = self.positional_encoding(xyz_normalized)
         
         # 2. SH Flatten (48ch)
         # sh input: [N, 16, 3] or [N, 48] 유연하게 처리
@@ -137,6 +143,8 @@ class AttributeEncoder(nn.Module):
             
         # xyz_encoded(60) + sh(48) + scale(3) + rot(4) + opacity(1)
         x = torch.cat([pos_encoded, sh, scale, rot, opacity], dim=1)
+
+        x = self.input_norm(x)
         
         # 5. MLP
         return self.mlp(x)
