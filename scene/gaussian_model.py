@@ -53,7 +53,7 @@ class GaussianModel:
         self.mlp2=MLP2(16,128).to("cuda")
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
-        self.attribute_encoder=AttributeEncoder(132, 256, 128).to("cuda")  # Input: 132 (116 + 16), Hidden: 256, Output: 128
+        self.attribute_encoder=AttributeEncoder(116, 256, 128).to("cuda")  # Input: 132 (116 + 16), Hidden: 256, Output: 128
         self.atgm=ATGM(dim=128).to("cuda")  # Attribute-Text Gating Module
 
         

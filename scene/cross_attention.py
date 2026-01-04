@@ -89,7 +89,7 @@ class AttributeEncoder(nn.Module):
     Input: xyz, scale, rot, opacity, sh, language_feature
     Output: 128 channels
     """
-    def __init__(self, input_dim=132, hidden_dim=256, out_dim=128):
+    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
         super().__init__()
         # Positional Encoding 설정
         self.L = 10
@@ -123,7 +123,7 @@ class AttributeEncoder(nn.Module):
         pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
         return pe
     
-    def forward(self, xyz, scale, rot, opacity, sh, language_feature):
+    def forward(self, xyz, scale, rot, opacity, sh):
         """
         메인 코드에서 복잡하게 cat하지 말고, 속성만 넘겨주면 알아서 처리
         """
@@ -134,16 +134,9 @@ class AttributeEncoder(nn.Module):
         # sh input: [N, 16, 3] or [N, 48] 유연하게 처리
         if sh.dim() == 3:
             sh = sh.reshape(sh.shape[0], -1)
-        
-        # 3. Language Feature (16ch)
-        # language_feature: [N, 16]
-        if language_feature is None:
-            # language_feature가 없으면 0으로 채움
-            language_feature = torch.zeros(xyz.shape[0], 16, device=xyz.device)
             
-        # 4. Concatenation (132ch)
-        # xyz_encoded(60) + sh(48) + scale(3) + rot(4) + opacity(1) + language_feature(16)
-        x = torch.cat([pos_encoded, sh, scale, rot, opacity, language_feature], dim=1)
+        # xyz_encoded(60) + sh(48) + scale(3) + rot(4) + opacity(1)
+        x = torch.cat([pos_encoded, sh, scale, rot, opacity], dim=1)
         
         # 5. MLP
         return self.mlp(x)
