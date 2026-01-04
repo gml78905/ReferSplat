@@ -185,6 +185,8 @@ class ATGM(nn.Module):
         f_mod_norm = F.normalize(f_modulated, p=2, dim=1)
         text_norm = F.normalize(sentence_emb, p=2, dim=1)
         scores = torch.sum(f_mod_norm * text_norm, dim=1, keepdim=True)
+
+        scores = (scores + 1.0) / 2.0
         
         return scores  # [N, 1]
 

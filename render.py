@@ -116,7 +116,7 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
                 rendering = output["render"]
             else:
                 rendering = output["language_feature_image"]
-                rendering = torch.sigmoid(rendering)
+                # rendering = torch.sigmoid(rendering)
                 rendering = (rendering>=0.5).float()
                 
             if not args.include_feature:
