@@ -79,7 +79,7 @@ class GaussianModel:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
           outputs = self.model(**inputs)
-          outputs=outputs[0][:,1:-1,:]
+          outputs=outputs[0][:,:-1,:]  # SEP만 제거, CLS 토큰 포함 (인덱스 0이 CLS)
         return outputs
     
     def capture(self, include_feature=False):
