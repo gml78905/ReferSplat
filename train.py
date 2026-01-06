@@ -101,7 +101,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     sentence_tensor = sentence_tensor.unsqueeze(0).to("cuda")
                     com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
-                    loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
+                    # loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
+                    loss = bce_loss(language_feature, gt_mask)
                     loss.backward()
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)
