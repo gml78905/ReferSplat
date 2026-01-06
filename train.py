@@ -74,6 +74,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ratio=0.1
     total_loss=[]
     iteration=1
+    # For logging losses
+    current_bce_loss = 0.0
+    current_com_loss = 0.0
     for epoch in range(epoch_num):
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
@@ -101,8 +104,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     sentence_tensor = sentence_tensor.unsqueeze(0).to("cuda")
                     com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
-                    # loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
-                    loss = bce_loss(language_feature, gt_mask)
+                    bce_loss_value = bce_loss(language_feature, gt_mask)
+                    # loss = bce_loss_value + 0.1*com_loss
+                    loss = bce_loss_value
+                    
+                    # Store loss values for logging (before backward)
+                    with torch.no_grad():
+                        current_bce_loss = bce_loss_value.item()
+                        current_com_loss = com_loss.item()
+                    
                     loss.backward()
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)
@@ -115,6 +125,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 with torch.no_grad():
                     ema_loss_for_log = 0.4*loss.item()+0.6*ema_loss_for_log
                     if iteration % 10 == 0:
+                        # Print losses every 10 iterations
+                        print(f"Iteration {iteration}: BCE Loss = {current_bce_loss:.6f}, COM Loss = {current_com_loss:.6f}")
                         progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                         progress_bar.update(10)
                         total_loss.append(ema_loss_for_log)
