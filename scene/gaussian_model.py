@@ -102,6 +102,8 @@ class GaussianModel:
                 self.mlp2.state_dict(),
                 self.mlp3.state_dict(),
                 self.cross_attention.state_dict(),
+                self.attribute_encoder.state_dict(),
+                self.atgm.state_dict(),
             )
         else:
             return (
@@ -120,7 +122,37 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 17:
+        if len(model_args) == 19:
+            # New format with attribute_encoder and atgm
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            #self.text_language_feature,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            cross_attention_params,
+            attribute_encoder_params,
+            atgm_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.attribute_encoder.load_state_dict(attribute_encoder_params)
+            self.atgm.load_state_dict(atgm_params)
+        elif len(model_args) == 17:
+            # Old format without attribute_encoder and atgm (backward compatibility)
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -144,6 +176,7 @@ class GaussianModel:
             self.mlp2.load_state_dict(mlp2_params)
             self.mlp3.load_state_dict(mlp3_params)
             self.cross_attention.load_state_dict(cross_attention_params)
+            # attribute_encoder와 atgm은 초기화된 상태로 유지
         elif len(model_args) == 11: 
             (self.active_sh_degree, 
             self._xyz, 

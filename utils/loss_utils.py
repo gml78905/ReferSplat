@@ -76,9 +76,8 @@ def multi_pos_cross_entropy(pred,
 
 
 def bce_loss(pred, gt):
-    pred = torch.clamp(pred, min=1e-7, max=1-1e-7)
-    
-    return F.binary_cross_entropy(pred, gt)
+    # sigmoid를 사용: binary_cross_entropy_with_logits는 내부적으로 sigmoid를 적용
+    return F.binary_cross_entropy_with_logits(pred, gt)
 
 def dice_loss(pred, gt):
     smooth = 1e-9

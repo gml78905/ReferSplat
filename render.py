@@ -197,7 +197,7 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
                 gt = view.original_image[0:3, :, :]
             else:
                 rendering = output["language_feature_image"]
-                # rendering = torch.sigmoid(rendering)
+                rendering = torch.sigmoid(rendering)
                 rendering = (rendering>=0.5).float()
                 gt = view.gt_mask[view.category[i]]
                 
