@@ -162,11 +162,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # SH features: [N, 16, 3] (DC + rest)
     sh_features = pc.get_features  # [N, 16, 3] for degree 3
     
-    # Attribute Encoder를 통해 128차원으로 변환
-    x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features)  # [N, 128]
-    
-    # 이웃 특징들과 aggregate (Residual Connection 적용)
-    f_3d = aggregate_neighbors(x, neighbor_indices, neighbor_weights)  # [N, 128]
+    # f_3d를 학습 가능한 _language_feature로부터 계산
+    f_3d = pc.mlp2(pc._language_feature)  # [N, 128]
     
     # ATGM을 사용하여 features 계산
     # f_3d: [N, 128], f_text: [1, T, 128] (t_token)
