@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention  
+from .cross_attention import MLP1,MLP2,MLP3,CrossAttention,AttributeEncoder  
 
                        
 class GaussianModel:
@@ -47,12 +47,12 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self._language_feature = None
         self.feature_project=None 
         self.text_language_feature =torch.empty(0)
         self.mlp2=MLP2(16,128).to("cuda")
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
+        self.attribute_encoder=AttributeEncoder(input_dim=116, hidden_dim=256, out_dim=128).to("cuda")
 
         
         self.max_radii2D = torch.empty(0)
@@ -88,7 +88,6 @@ class GaussianModel:
                 self._scaling,
                 self._rotation,
                 self._opacity,
-                self._language_feature,
                 self.max_radii2D,
                 self.xyz_gradient_accum,
                 self.denom,
@@ -98,6 +97,7 @@ class GaussianModel:
                 self.mlp2.state_dict(),
                 self.mlp3.state_dict(),
                 self.cross_attention.state_dict(),
+                self.attribute_encoder.state_dict(),
             )
         else:
             return (
@@ -117,6 +117,7 @@ class GaussianModel:
     
     def restore(self, model_args, training_args, mode='train'):
         if len(model_args) == 17:
+            # Old format with _language_feature (for backward compatibility)
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -124,13 +125,12 @@ class GaussianModel:
             self._scaling, 
             self._rotation, 
             self._opacity,
-            self._language_feature,
+            _language_feature_old,  # Ignore old _language_feature
             self.max_radii2D, 
             xyz_gradient_accum, 
             denom,
             opt_dict, 
             self.spatial_lr_scale,
-            #self.text_language_feature,
             mlp1_params,
             mlp2_params,
             mlp3_params,
@@ -140,7 +140,8 @@ class GaussianModel:
             self.mlp2.load_state_dict(mlp2_params)
             self.mlp3.load_state_dict(mlp3_params)
             self.cross_attention.load_state_dict(cross_attention_params)
-        elif len(model_args) == 11: 
+        elif len(model_args) == 18:
+            # New format with attribute_encoder
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -148,7 +149,32 @@ class GaussianModel:
             self._scaling, 
             self._rotation, 
             self._opacity,
-            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            cross_attention_params,
+            attribute_encoder_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.attribute_encoder.load_state_dict(attribute_encoder_params)
+        elif len(model_args) == 11: 
+            # Old format with _language_feature (for backward compatibility)
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            _language_feature_old,  # Ignore old _language_feature
             self.max_radii2D, 
             xyz_gradient_accum, 
             denom,
@@ -198,12 +224,6 @@ class GaussianModel:
         return self.opacity_activation(self._opacity)
     
     @property
-    def get_language_feature(self):
-        if self._language_feature is not None:
-            return self._language_feature
-        else:
-            raise ValueError('没有设置language feature')
-    @property
     def get_text_language_feature(self):
         if self.text_language_feature is not None:
             return self.text_language_feature
@@ -249,16 +269,12 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         
         if training_args.include_feature:
-            if self._language_feature is None or self._language_feature.shape[0] != self._xyz.shape[0]:
-                language_feature = torch.zeros((self._xyz.shape[0], 16), device="cuda")
-                self._language_feature = nn.Parameter(language_feature.requires_grad_(True))
-                
             l = [
-                {'params': [self._language_feature], 'lr': training_args.language_feature_lr, "name": "language_feature"},
                  {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
                  {'params': self.mlp2.parameters(), 'lr': training_args.mlp_lr, "name": "mlp2"},
                  {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
                  {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
+                 {'params': self.attribute_encoder.parameters(), 'lr': training_args.mlp_lr, "name": "attribute_encoder"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)

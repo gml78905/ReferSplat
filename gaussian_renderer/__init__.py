@@ -81,13 +81,23 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
     
-
-    p=pc.mlp3(pc.get_xyz)
-    p=F.normalize(p,dim=-1)
-    x=pc.mlp2(pc._language_feature)
-    g=pc.cross_attention(x,p,t_token)
-    features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
-    features=features.sum(dim=-1,keepdim=True)
+    # Extract attributes
+    xyz = pc.get_xyz  # [N, 3]
+    scale = pc.get_scaling  # [N, 3]
+    rotation = pc.get_rotation  # [N, 4]
+    opacity = pc.get_opacity  # [N, 1]
+    
+    # SH features: [N, 16, 3] (DC + rest)
+    sh_features = pc.get_features  # [N, 16, 3] for degree 3
+    
+    # Attribute Encoder를 통해 128차원으로 변환
+    x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features)
+    
+    p = pc.mlp3(pc.get_xyz)
+    p = F.normalize(p, dim=-1)
+    g = pc.cross_attention(x, p, t_token)
+    features = torch.matmul(g, t_token.transpose(-1, -2)).squeeze(0)
+    features = features.sum(dim=-1, keepdim=True)
 
     
     sorted_indices = torch.argsort(features, descending=True)

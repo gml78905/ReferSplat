@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class CrossAttention(nn.Module):
     def __init__(self, dim, num_heads):
@@ -81,5 +82,70 @@ class MLP3(nn.Module):
         
         x = self.fc3(x)
         return x    
+
+
+class AttributeEncoder(nn.Module):
+    """
+    Attribute Encoder: 가우시안의 모든 속성을 인코딩
+    Input: xyz, scale, rot, opacity, sh
+    Output: 128 channels
+    """
+    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+        super().__init__()
+        # Positional Encoding 설정
+        self.L = 10
+        self.pe_channels = 3 * 2 * self.L  # 60
+        self.input_norm = nn.LayerNorm(input_dim)
+        
+        # MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim)
+            # 필요시 LayerNorm 추가 가능
+        )
+    
+    def positional_encoding(self, xyz):
+        """Vectorized Positional Encoding"""
+        # xyz: [N, 3]
+        B, _ = xyz.shape
+        device = xyz.device
+        
+        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
+        # [L] -> [1, L]
+        bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
+        
+        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
+        # coord * freq * pi
+        x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
+        
+        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
+        sin_x = torch.sin(x)
+        cos_x = torch.cos(x)
+        pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
+        return pe
+    
+    def forward(self, xyz, scale, rotation, opacity, sh_features):
+        """
+        xyz: [N, 3]
+        scale: [N, 3]
+        rotation: [N, 4]
+        opacity: [N, 1]
+        sh_features: [N, 16, 3] for degree 3
+        """
+        # Positional encoding for xyz
+        pe = self.positional_encoding(xyz)  # [N, 60]
+        
+        # Flatten sh_features: [N, 16, 3] -> [N, 48]
+        sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
+        
+        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
+        features = torch.cat([pe, scale, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        
+        # Normalize and encode
+        features = self.input_norm(features)
+        encoded = self.mlp(features)  # [N, 128]
+        
+        return encoded
 
 
