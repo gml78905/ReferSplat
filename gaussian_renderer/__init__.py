@@ -168,9 +168,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # 이웃 특징들과 aggregate (Residual Connection 적용)
     f_3d = aggregate_neighbors(x, neighbor_indices, neighbor_weights)  # [N, 128]
     
-    # ATGM을 사용하여 features 계산
-    # f_3d: [N, 128], f_text: [1, T, 128] (t_token)
-    features = pc.atgm(f_3d, t_token)  # [N, 1]
+    # Cross-Attention을 통해 텍스트 토큰 정보로 f_3d를 업데이트
+    # f_3d: [N, 128], t_token: [1, T, 128]
+    g = pc.cross_attention(f_3d, f_3d, t_token)  # [N, 128]
+    features = torch.matmul(g, t_token.transpose(-1, -2)).squeeze(0)  # [N, T]
+    features = features.sum(dim=-1, keepdim=True)  # [N, 1]
 
     
     sorted_indices = torch.argsort(features.squeeze(), descending=True)

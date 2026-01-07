@@ -105,8 +105,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
                     bce_loss_value = bce_loss(language_feature, gt_mask)
-                    # loss = bce_loss_value + 0.1*com_loss
-                    loss = bce_loss_value
+                    loss = bce_loss_value + 0.1*com_loss
+                    # loss = bce_loss_value
                     
                     # Store loss values for logging (before backward)
                     with torch.no_grad():
