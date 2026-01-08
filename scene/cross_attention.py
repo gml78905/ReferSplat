@@ -164,8 +164,11 @@ class AttributeEncoder(nn.Module):
         opacity: [N, 1]
         sh_features: [N, 16, 3] for degree 3
         """
+        
+        xyz_normalized = torch.tanh(xyz / 20.0)
+
         # Positional encoding for xyz
-        pe = self.positional_encoding(xyz)  # [N, 60]
+        pe = self.positional_encoding(xyz_normalized)  # [N, 60]
 
         scale_log = torch.log(scale + 1e-9)
         
