@@ -90,7 +90,7 @@ class AttributeEncoder(nn.Module):
     Input: xyz, scale, rot, opacity, sh
     Output: 128 channels
     """
-    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+    def __init__(self, input_dim=119, hidden_dim=256, out_dim=128):
         super().__init__()
         # Positional Encoding 설정
         self.L = 10
@@ -124,6 +124,37 @@ class AttributeEncoder(nn.Module):
         cos_x = torch.cos(x)
         pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
         return pe
+
+    def compute_shape_metrics(self, scale):
+        """
+        [Shape Logic Implementation]
+        Scale 값을 정렬하여 형태학적 특징(Linear, Planar, Spherical)을 추출
+        """
+        # 1. Sort scales: lambda_1 >= lambda_2 >= lambda_3
+        # values: [N, 3], indices: [N, 3]
+        sorted_scale, _ = torch.sort(scale, dim=1, descending=True)
+        
+        l1 = sorted_scale[:, 0]
+        l2 = sorted_scale[:, 1]
+        l3 = sorted_scale[:, 2]
+        
+        # 분모 (Normalization term) - 0 나누기 방지
+        denominator = l1 + l2 + l3 + 1e-9
+        
+        # 2. Compute Metrics (Westin's Metrics)
+        # Linearity: 가장 긴 축이 두 번째 축보다 얼마나 더 긴가?
+        c_linear = (l1 - l2) / denominator
+        
+        # Planarity: 두 번째 축이 세 번째 축보다 얼마나 더 긴가?
+        c_planar = 2 * (l2 - l3) / denominator
+        
+        # Sphericity: 세 번째 축(가장 작은 축)이 얼마나 큰가?
+        c_spherical = 3 * l3 / denominator
+        
+        # [N, 3]
+        shape_metrics = torch.stack([c_linear, c_planar, c_spherical], dim=1)
+        
+        return shape_metrics
     
     def forward(self, xyz, scale, rotation, opacity, sh_features):
         """
@@ -140,9 +171,11 @@ class AttributeEncoder(nn.Module):
         
         # Flatten sh_features: [N, 16, 3] -> [N, 48]
         sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
+
+        shape_features = self.compute_shape_metrics(scale)
         
-        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
-        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) + 3 (shape_features) = 119
+        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat, shape_features], dim=1)  # [N, 119]
         
         # Normalize and encode
         features = self.input_norm(features)
