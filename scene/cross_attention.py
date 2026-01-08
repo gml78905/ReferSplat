@@ -105,23 +105,34 @@ class AttributeEncoder(nn.Module):
             # 필요시 LayerNorm 추가 가능
         )
     
-    def positional_encoding(self, xyz):
-        """Vectorized Positional Encoding"""
-        # xyz: [N, 3]
+    def integrated_positional_encoding(self, xyz, scale):
+        """
+        [IPE 적용]
+        xyz: 위치 정보
+        scale: 크기 정보 (고주파 필터링 강도 결정용)
+        """
         B, _ = xyz.shape
         device = xyz.device
         
-        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
-        # [L] -> [1, L]
-        bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
+        # 1. 주파수 대역 생성: 2^0, ... , 2^(L-1)
+        freqs = 2.0 ** torch.arange(self.L, device=device).view(1, -1)
         
-        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
-        # coord * freq * pi
-        x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
+        # 2. 기본 위상 계산 (sin/cos 안에 들어갈 값)
+        # xyz * 2^k * pi
+        args = xyz.unsqueeze(-1) * freqs.unsqueeze(1) * math.pi
         
-        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
-        sin_x = torch.sin(x)
-        cos_x = torch.cos(x)
+        # 3. 감쇠 계수(Attenuation) 계산 [여기가 핵심!]
+        # exp( -0.5 * (scale * 2^k * pi)^2 )
+        # scale이 클수록(배경), 주파수(2^k)가 높을수록 -> 0에 가까워짐
+        scale_safe = scale.unsqueeze(-1) 
+        var = scale_safe ** 2
+        coeff = (freqs * math.pi)**2 * var
+        attenuation = torch.exp(-0.5 * coeff)
+        
+        # 4. sin/cos에 감쇠 적용
+        sin_x = torch.sin(args) * attenuation
+        cos_x = torch.cos(args) * attenuation
+        
         pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
         return pe
     
@@ -133,8 +144,11 @@ class AttributeEncoder(nn.Module):
         opacity: [N, 1]
         sh_features: [N, 16, 3] for degree 3
         """
+
+        xyz_normalized = torch.tanh(xyz / 20.0)
+
         # Positional encoding for xyz
-        pe = self.positional_encoding(xyz)  # [N, 60]
+        pe = self.integrated_positional_encoding(xyz_normalized, scale)
 
         scale_log = torch.log(scale + 1e-9)
         
