@@ -135,12 +135,14 @@ class AttributeEncoder(nn.Module):
         """
         # Positional encoding for xyz
         pe = self.positional_encoding(xyz)  # [N, 60]
+
+        scale_log = torch.log(scale + 1e-9)
         
         # Flatten sh_features: [N, 16, 3] -> [N, 48]
         sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
         
         # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
-        features = torch.cat([pe, scale, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
         
         # Normalize and encode
         features = self.input_norm(features)
