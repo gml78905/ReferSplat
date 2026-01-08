@@ -90,7 +90,7 @@ class AttributeEncoder(nn.Module):
     Input: xyz, scale, rot, opacity, sh
     Output: 128 channels
     """
-    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+    def __init__(self, input_dim=87, hidden_dim=256, out_dim=128):
         super().__init__()
         # Positional Encoding 설정
         self.L = 10
@@ -103,6 +103,11 @@ class AttributeEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, out_dim)
             # 필요시 LayerNorm 추가 가능
+        )
+
+        self.sh_rest_encoder = nn.Sequential(
+            nn.Linear(45, 16),
+            nn.ReLU() # 비선형성을 추가하여 '재질감'을 추상화
         )
     
     def positional_encoding(self, xyz):
@@ -137,12 +142,15 @@ class AttributeEncoder(nn.Module):
         pe = self.positional_encoding(xyz)  # [N, 60]
 
         scale_log = torch.log(scale + 1e-9)
+
+        sh_dc = sh_features[:, 0, :]
+        sh_rest = sh_features[:, 1:, :].reshape(sh_features.shape[0], -1)
+
+        sh_rest_encoded = self.sh_rest_encoder(sh_rest)
+
         
-        # Flatten sh_features: [N, 16, 3] -> [N, 48]
-        sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
-        
-        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
-        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 3 (sh_dc) + 16 (sh_rest_encoded) = 87
+        features = torch.cat([pe, scale_log, rotation, opacity, sh_dc, sh_rest_encoded], dim=1)  # [N, 87]
         
         # Normalize and encode
         features = self.input_norm(features)
