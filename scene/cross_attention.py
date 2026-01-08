@@ -84,13 +84,34 @@ class MLP3(nn.Module):
         return x    
 
 
+# --- Helper: Quaternion -> Rotation Matrix ---
+def build_rotation(r):
+    norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
+    q = r / norm[:, None]
+    R = torch.zeros((q.size(0), 3, 3), device=r.device)
+    r = q[:, 0]
+    x = q[:, 1]
+    y = q[:, 2]
+    z = q[:, 3]
+    R[:, 0, 0] = 1 - 2 * (y*y + z*z)
+    R[:, 0, 1] = 2 * (x*y - r*z)
+    R[:, 0, 2] = 2 * (x*z + r*y)
+    R[:, 1, 0] = 2 * (x*y + r*z)
+    R[:, 1, 1] = 1 - 2 * (x*x + z*z)
+    R[:, 1, 2] = 2 * (y*z - r*x)
+    R[:, 2, 0] = 2 * (x*z - r*y)
+    R[:, 2, 1] = 2 * (y*z + r*x)
+    R[:, 2, 2] = 1 - 2 * (x*x + y*y)
+    return R
+
 class AttributeEncoder(nn.Module):
     """
     Attribute Encoder: 가우시안의 모든 속성을 인코딩
     Input: xyz, scale, rot, opacity, sh
     Output: 128 channels
+    * Modified: Rotation(4) -> Covariance(6)
     """
-    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+    def __init__(self, input_dim=118, hidden_dim=256, out_dim=128): # input_dim: 116 -> 118
         super().__init__()
         # Positional Encoding 설정
         self.L = 10
@@ -107,44 +128,65 @@ class AttributeEncoder(nn.Module):
     
     def positional_encoding(self, xyz):
         """Vectorized Positional Encoding"""
-        # xyz: [N, 3]
         B, _ = xyz.shape
         device = xyz.device
-        
-        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
-        # [L] -> [1, L]
         bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
-        
-        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
-        # coord * freq * pi
         x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
-        
-        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
         sin_x = torch.sin(x)
         cos_x = torch.cos(x)
         pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
         return pe
     
+    def compute_covariance_features(self, scale, rotation):
+        """Scale과 Rotation을 결합하여 6D Covariance Feature 생성"""
+        # 1. Scaling Matrix S
+        S = torch.zeros((scale.shape[0], 3, 3), device=scale.device)
+        S[:, 0, 0] = scale[:, 0]
+        S[:, 1, 1] = scale[:, 1]
+        S[:, 2, 2] = scale[:, 2]
+        
+        # 2. Rotation Matrix R
+        R = build_rotation(rotation)
+        
+        # 3. Covariance Matrix Sigma = R S S^T R^T = (RS)(RS)^T
+        M = torch.bmm(R, S)
+        Cov = torch.bmm(M, M.transpose(1, 2)) # [N, 3, 3]
+        
+        # 4. Extract Upper Triangle (6 elements)
+        # xx, xy, xz, yy, yz, zz
+        cov_features = torch.stack([
+            Cov[:, 0, 0], Cov[:, 0, 1], Cov[:, 0, 2],
+            Cov[:, 1, 1], Cov[:, 1, 2],
+            Cov[:, 2, 2]
+        ], dim=1) # [N, 6]
+        
+        # 5. Normalization (중요!)
+        # Covariance 값은 Scale의 제곱에 비례하므로 값이 매우 커질 수 있음.
+        # 학습 안정을 위해 tanh로 범위를 -1~1로 압축
+        return torch.tanh(cov_features)
+    
     def forward(self, xyz, scale, rotation, opacity, sh_features):
         """
         xyz: [N, 3]
         scale: [N, 3]
-        rotation: [N, 4]
+        rotation: [N, 4] -> 사용 안 함 (Covariance 계산에만 사용)
         opacity: [N, 1]
-        sh_features: [N, 16, 3] for degree 3
+        sh_features: [N, 16, 3]
         """
         # Positional encoding for xyz
         xyz_normalized = torch.tanh(xyz / 20.0)
-
         pe = self.positional_encoding(xyz_normalized)  # [N, 60]
-
-        scale_log = torch.log(scale + 1e-9)
+        scale_log = torch.log(scale + 1e-9) # [N, 3]
+        
+        # [수정됨] Rotation 대신 Covariance 계산
+        cov_features = self.compute_covariance_features(scale, rotation) # [N, 6]
         
         # Flatten sh_features: [N, 16, 3] -> [N, 48]
         sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
         
-        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
-        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        # Concatenate all features
+        # PE(60) + Scale(3) + Covariance(6) + Opacity(1) + SH(48) = 118
+        features = torch.cat([pe, scale_log, cov_features, opacity, sh_flat], dim=1)  # [N, 118]
         
         # Normalize and encode
         features = self.input_norm(features)
