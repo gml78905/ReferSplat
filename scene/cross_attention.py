@@ -190,9 +190,9 @@ class ATGM(nn.Module):
         # 2. Cosine Similarity
         f_mod_norm = F.normalize(f_modulated, p=2, dim=1)
         text_norm = F.normalize(sentence_emb, p=2, dim=1)
-        scores = torch.sum(f_mod_norm * text_norm, dim=1, keepdim=True)
+        logits = f_f_mod_normnorm @ text_norm.T
         
         # Temperature scaling for logits (temperature = 0.1)
-        scores = scores / self.temperature
+        scores = logits / self.temperature
         
         return f_modulated, scores  # [N, 1] - logits 범위

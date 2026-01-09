@@ -74,7 +74,7 @@ class GaussianModel:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
           outputs = self.model(**inputs)
-          outputs=outputs[0][:,:-1,:]
+          outputs=outputs[0][:,0,:]
         return outputs
     
     def capture(self, include_feature=False):
