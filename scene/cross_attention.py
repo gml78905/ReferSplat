@@ -86,70 +86,102 @@ class MLP3(nn.Module):
 
 class AttributeEncoder(nn.Module):
     """
-    Attribute Encoder: 가우시안의 모든 속성을 인코딩
-    Input: xyz, scale, rot, opacity, sh
-    Output: 128 channels
+    Dual-Stream Attribute Encoder (No KNN)
+    - Geometry Stream: IPE + Explicit Shape Metrics (Westin's) + Covariance
+    - Appearance Stream: Disentangled SH (DC/Rest) + Opacity
     """
-    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
+    def __init__(self, out_dim=128):
         super().__init__()
-        # Positional Encoding 설정
+
+        # -----------------------------------------------------------
+        # 1. Geometry Stream
+        # -----------------------------------------------------------
         self.L = 10
-        self.pe_channels = 3 * 2 * self.L  # 60
-        self.input_norm = nn.LayerNorm(input_dim)
-        
-        # MLP
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        self.geo_input_dim = 60 + 3 + 4 + 6
+        self.geo_mlp = nn.Sequential(
+            nn.Linear(self.geo_input_dim, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
-            nn.Linear(hidden_dim, out_dim)
-            # 필요시 LayerNorm 추가 가능
+            nn.Linear(64, 64),
+            nn.LayerNorm(64),
+            nn.ReLU()
         )
-    
-    def positional_encoding(self, xyz):
-        """Vectorized Positional Encoding"""
-        # xyz: [N, 3]
+
+        # -----------------------------------------------------------
+        # 2. Appearance Stream
+        # -----------------------------------------------------------
+        self.sh_compressor = nn.Linear(45, 16)
+        self.app_input_dim = 3 + 16 + 1
+        self.app_mlp = nn.Sequential(
+            nn.Linear(self.app_input_dim, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.LayerNorm(64),
+            nn.ReLU()
+        )
+
+        # -----------------------------------------------------------
+        # 3. Final Projection
+        # -----------------------------------------------------------
+        self.final_head = nn.Sequential(
+            nn.Linear(64 + 64, 128),
+            nn.ReLU(),
+            nn.Linear(128, out_dim)
+        )
+
+    def integrated_positional_encoding(self, xyz, scale):
         B, _ = xyz.shape
         device = xyz.device
-        
-        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
-        # [L] -> [1, L]
-        bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
-        
-        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
-        # coord * freq * pi
-        x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
-        
-        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
-        sin_x = torch.sin(x)
-        cos_x = torch.cos(x)
-        pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
-        return pe
-    
+
+        scale_safe = scale / 20.0
+        freqs = 2.0 ** torch.arange(self.L, device=device).view(1, -1)
+        args = xyz.unsqueeze(-1) * freqs.unsqueeze(1) * math.pi
+
+        scale_input = scale_safe.unsqueeze(-1)
+        var = scale_input ** 2
+        coeff = (freqs * math.pi) ** 2 * var
+        attenuation = torch.exp(-0.5 * coeff)
+
+        sin_x = torch.sin(args) * attenuation
+        cos_x = torch.cos(args) * attenuation
+        return torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
+
+    def compute_westin_metrics(self, scale):
+        sorted_scale, _ = torch.sort(scale, dim=1, descending=True)
+        l1, l2, l3 = sorted_scale[:, 0], sorted_scale[:, 1], sorted_scale[:, 2]
+        denom = l1 + 1e-9
+
+        linearity = (l1 - l2) / denom
+        planarity = (l2 - l3) / denom
+        sphericity = l3 / denom
+        anisotropy = (l1 - l3) / denom
+
+        return torch.stack([linearity, planarity, sphericity, anisotropy], dim=1)
+
+    def compute_cov_features(self, scale, rotation):
+        return torch.zeros(scale.shape[0], 6, device=scale.device)
+
     def forward(self, xyz, scale, rotation, opacity, sh_features):
-        """
-        xyz: [N, 3]
-        scale: [N, 3]
-        rotation: [N, 4]
-        opacity: [N, 1]
-        sh_features: [N, 16, 3] for degree 3
-        """
-        # Positional encoding for xyz
-        xyz_normalized = torch.tanh(xyz / 20.0)
-
-        pe = self.positional_encoding(xyz_normalized)  # [N, 60]
-
+        # Geometry stream
+        xyz_norm = torch.tanh(xyz / 20.0)
+        ipe = self.integrated_positional_encoding(xyz_norm, scale)
+        westin = self.compute_westin_metrics(scale)
         scale_log = torch.log(scale + 1e-9)
-        
-        # Flatten sh_features: [N, 16, 3] -> [N, 48]
-        sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
-        
-        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
-        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
-        
-        # Normalize and encode
-        features = self.input_norm(features)
-        encoded = self.mlp(features)  # [N, 128]
-        
-        return encoded
+        cov_feat = self.compute_cov_features(scale, rotation)
+        geo_in = torch.cat([ipe, scale_log, westin, cov_feat], dim=1)
+        f_geo = self.geo_mlp(geo_in)
 
+        # Appearance stream
+        if sh_features.dim() == 2:
+            sh_features = sh_features.view(-1, 16, 3)
+        sh_dc = sh_features[:, 0, :]
+        sh_rest = sh_features[:, 1:, :].reshape(sh_features.shape[0], -1)
+        sh_rest_comp = self.sh_compressor(sh_rest)
+        app_in = torch.cat([sh_dc, sh_rest_comp, opacity], dim=1)
+        f_app = self.app_mlp(app_in)
 
+        # Fusion
+        f_fused = torch.cat([f_geo, f_app], dim=1)
+        out = self.final_head(f_fused)
+        return out
