@@ -51,7 +51,7 @@ class GaussianModel:
         self.text_language_feature =torch.empty(0)
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
-        self.attribute_encoder=AttributeEncoder(input_dim=116, hidden_dim=256, out_dim=128).to("cuda")
+        self.attribute_encoder=AttributeEncoder(out_dim=128).to("cuda")
 
         
         self.max_radii2D = torch.empty(0)
