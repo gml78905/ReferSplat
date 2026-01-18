@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP3,CrossAttention,AttributeEncoder  
+from .cross_attention import MLP1, MLP3, CrossAttention, AttributeEncoder
 
                        
 class GaussianModel:
@@ -51,7 +51,7 @@ class GaussianModel:
         self.text_language_feature =torch.empty(0)
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
-        self.attribute_encoder=AttributeEncoder(out_dim=128).to("cuda")
+        self.attribute_encoder=AttributeEncoder(out_dim=128, owner=self).to("cuda")
 
         
         self.max_radii2D = torch.empty(0)
@@ -61,6 +61,10 @@ class GaussianModel:
         self.scheduler = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        
+        # KNN neighbor 관련 속성 초기화
+        self._k_neighbors = 64
+        self._neighbor_indices = None
         
         self.setup_functions()
         self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
@@ -114,7 +118,32 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 16:
+        if len(model_args) == 17:
+            # Backward compatibility: dual_scale_context_block saved separately
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            mlp1_params,
+            mlp3_params,
+            cross_attention_params,
+            attribute_encoder_params,
+            dual_scale_context_block_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.attribute_encoder.load_state_dict(attribute_encoder_params, strict=False)
+            self.attribute_encoder.dual_scale_context_block.load_state_dict(dual_scale_context_block_params)
+        elif len(model_args) == 16:
             # New format with attribute_encoder (mlp2 removed)
             (self.active_sh_degree, 
             self._xyz, 
@@ -136,7 +165,7 @@ class GaussianModel:
             self.mlp1.load_state_dict(mlp1_params)
             self.mlp3.load_state_dict(mlp3_params)
             self.cross_attention.load_state_dict(cross_attention_params)
-            self.attribute_encoder.load_state_dict(attribute_encoder_params)
+            self.attribute_encoder.load_state_dict(attribute_encoder_params, strict=False)
         elif len(model_args) == 17:
             # Old format with _language_feature (for backward compatibility)
             # 원래 코드에서는 mlp2, mlp1, mlp3 순서였지만 mlp2 제거됨
