@@ -126,11 +126,11 @@ class AttributeEncoder(nn.Module):
         # 3. Final Projection
         # -----------------------------------------------------------
         self.final_head = nn.Sequential(
-            nn.Linear(32 + 32, 64),
+            nn.Linear(32, 64),
             nn.ReLU(),
             nn.Linear(64, out_dim)
         )
-        self.dual_scale_context_block = DualScaleContextBlock(in_dim=64)
+        self.dual_scale_context_block = DualScaleContextBlock(in_dim=32)
 
     def integrated_positional_encoding(self, xyz, scale):
         B, _ = xyz.shape
@@ -182,7 +182,7 @@ class AttributeEncoder(nn.Module):
         f_app = self.app_mlp(app_in)
 
         # Fusion
-        f_fused = torch.cat([f_geo, f_app], dim=1)
+        f_fused = f_geo + f_app
 
         
         knn_idx = None
