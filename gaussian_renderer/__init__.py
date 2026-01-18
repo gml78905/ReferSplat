@@ -94,12 +94,16 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Attribute Encoder를 통해 128차원으로 변환
     x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features)
 
-    f_x, features = pc.atgm(x, t_token)
+    p = pc.mlp3(pc.get_xyz)
+    p = F.normalize(p, dim=-1)
+    g = pc.cross_attention(x, p, t_token)
+    features = torch.matmul(g, t_token.transpose(-1, -2)).squeeze(0)
+    features = features.sum(dim=-1, keepdim=True)
 
-    sorted_indices = torch.argsort(features.squeeze(), descending=True)
-    indices = sorted_indices[:int(len(sorted_indices) * ratio)]
+    sorted_indices = torch.argsort(features, descending=True)
+    indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
    
-    selected_tensors = f_x[indices]
+    selected_tensors = g[indices]
 
     mean_tensor = torch.mean(selected_tensors, dim=0, keepdim=True)
     
