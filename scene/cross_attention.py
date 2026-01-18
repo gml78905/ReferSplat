@@ -134,9 +134,8 @@ class AttributeEncoder(nn.Module):
         sh_features: [N, 16, 3] for degree 3
         """
         # Positional encoding for xyz (이미 정규화된 값을 받음)
-        xyz_normalized = torch.tanh(xyz)
 
-        pe = self.positional_encoding(xyz_normalized)  # [N, 60]
+        pe = self.positional_encoding(xyz)  # [N, 60]
 
         # scale은 이미 정규화된 값을 받음
         scale_log = torch.log(scale + 1e-9)

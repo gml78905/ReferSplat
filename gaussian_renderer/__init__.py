@@ -82,8 +82,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
     # Extract attributes and normalize
-    xyz = pc.get_xyz / 20.0  # [N, 3] - 정규화
-    scale = pc.get_scaling / 20.0  # [N, 3] - 정규화
+    max_coord = torch.max(torch.abs(pc.get_xyz)).item() + 0.1
+    xyz = pc.get_xyz / max_coord  # [N, 3] - 정규화
+    scale = pc.get_scaling / max_coord  # [N, 3] - 정규화
     rotation = pc.get_rotation  # [N, 4]
     opacity = pc.get_opacity  # [N, 1]
     
@@ -92,18 +93,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     # Attribute Encoder를 통해 128차원으로 변환
     x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features)
-    
-    p = pc.mlp3(pc.get_xyz)
-    p = F.normalize(p, dim=-1)
-    g = pc.cross_attention(x, p, t_token)
-    features = torch.matmul(g, t_token.transpose(-1, -2)).squeeze(0)
-    features = features.sum(dim=-1, keepdim=True)
 
-    
-    sorted_indices = torch.argsort(features, descending=True)
-    indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
+    f_x, features = pc.atgm(x, t_token)
+
+    sorted_indices = torch.argsort(features.squeeze(), descending=True)
+    indices = sorted_indices[:int(len(sorted_indices) * ratio)]
    
-    selected_tensors = g[indices]
+    selected_tensors = f_x[indices]
 
     mean_tensor = torch.mean(selected_tensors, dim=0, keepdim=True)
     
