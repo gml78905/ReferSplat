@@ -100,11 +100,11 @@ class AttributeEncoder(nn.Module):
         self.L = 10
         self.geo_input_dim = 60 + 3 + 4 + 6
         self.geo_mlp = nn.Sequential(
-            nn.Linear(self.geo_input_dim, 32),
-            nn.LayerNorm(32),
+            nn.Linear(self.geo_input_dim, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.LayerNorm(32),
+            nn.Linear(64, 64),
+            nn.LayerNorm(64),
             nn.ReLU()
         )
 
@@ -114,11 +114,11 @@ class AttributeEncoder(nn.Module):
         self.sh_compressor = nn.Linear(45, 16)
         self.app_input_dim = 3 + 16 + 1
         self.app_mlp = nn.Sequential(
-            nn.Linear(self.app_input_dim, 32),
-            nn.LayerNorm(32),
+            nn.Linear(self.app_input_dim, 64),
+            nn.LayerNorm(64),
             nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.LayerNorm(32),
+            nn.Linear(64, 64),
+            nn.LayerNorm(64),
             nn.ReLU()
         )
 
@@ -126,7 +126,7 @@ class AttributeEncoder(nn.Module):
         # 3. Final Projection
         # -----------------------------------------------------------
         self.final_head = nn.Sequential(
-            nn.Linear(32 + 32, 64),
+            nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, out_dim)
         )
@@ -182,7 +182,7 @@ class AttributeEncoder(nn.Module):
         f_app = self.app_mlp(app_in)
 
         # Fusion
-        f_fused = torch.cat([f_geo, f_app], dim=1)
+        f_fused = f_geo + f_app
 
         
         knn_idx = None
