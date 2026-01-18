@@ -100,7 +100,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     features = features.sum(dim=-1, keepdim=True)
 
     
-    sorted_indices = torch.argsort(features.squeeze(), descending=True)
+    sorted_indices = torch.argsort(features, descending=True)
     indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
    
     selected_tensors = g[indices]
