@@ -86,102 +86,114 @@ class MLP3(nn.Module):
 
 class AttributeEncoder(nn.Module):
     """
-    Dual-Stream Attribute Encoder (No KNN)
-    - Geometry Stream: IPE + Explicit Shape Metrics (Westin's) + Covariance
-    - Appearance Stream: Disentangled SH (DC/Rest) + Opacity
+    Attribute Encoder: 가우시안의 모든 속성을 인코딩
+    Input: xyz, scale, rot, opacity, sh
+    Output: 128 channels
     """
-    def __init__(self, out_dim=128):
+    def __init__(self, input_dim=116, hidden_dim=256, out_dim=128):
         super().__init__()
-
-        # -----------------------------------------------------------
-        # 1. Geometry Stream
-        # -----------------------------------------------------------
+        # Positional Encoding 설정
         self.L = 10
-        self.geo_input_dim = 60 + 3 + 4 + 6
-        self.geo_mlp = nn.Sequential(
-            nn.Linear(self.geo_input_dim, 64),
-            nn.LayerNorm(64),
+        self.pe_channels = 3 * 2 * self.L  # 60
+        self.input_norm = nn.LayerNorm(input_dim)
+        
+        # MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.LayerNorm(64),
-            nn.ReLU()
+            nn.Linear(hidden_dim, out_dim)
+            # 필요시 LayerNorm 추가 가능
         )
-
-        # -----------------------------------------------------------
-        # 2. Appearance Stream
-        # -----------------------------------------------------------
-        self.sh_compressor = nn.Linear(45, 16)
-        self.app_input_dim = 3 + 16 + 1
-        self.app_mlp = nn.Sequential(
-            nn.Linear(self.app_input_dim, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.LayerNorm(64),
-            nn.ReLU()
-        )
-
-        # -----------------------------------------------------------
-        # 3. Final Projection
-        # -----------------------------------------------------------
-        self.final_head = nn.Sequential(
-            nn.Linear(64 + 64, 128),
-            nn.ReLU(),
-            nn.Linear(128, out_dim)
-        )
-
-    def integrated_positional_encoding(self, xyz, scale):
+    
+    def positional_encoding(self, xyz):
+        """Vectorized Positional Encoding"""
+        # xyz: [N, 3]
         B, _ = xyz.shape
         device = xyz.device
-
-        scale_safe = scale / 20.0
-        freqs = 2.0 ** torch.arange(self.L, device=device).view(1, -1)
-        args = xyz.unsqueeze(-1) * freqs.unsqueeze(1) * math.pi
-
-        scale_input = scale_safe.unsqueeze(-1)
-        var = scale_input ** 2
-        coeff = (freqs * math.pi) ** 2 * var
-        attenuation = torch.exp(-0.5 * coeff)
-
-        sin_x = torch.sin(args) * attenuation
-        cos_x = torch.cos(args) * attenuation
-        return torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
-
-    def compute_westin_metrics(self, scale):
-        sorted_scale, _ = torch.sort(scale, dim=1, descending=True)
-        l1, l2, l3 = sorted_scale[:, 0], sorted_scale[:, 1], sorted_scale[:, 2]
-        denom = l1 + 1e-9
-
-        linearity = (l1 - l2) / denom
-        planarity = (l2 - l3) / denom
-        sphericity = l3 / denom
-        anisotropy = (l1 - l3) / denom
-
-        return torch.stack([linearity, planarity, sphericity, anisotropy], dim=1)
-
-    def compute_cov_features(self, scale, rotation):
-        return torch.zeros(scale.shape[0], 6, device=scale.device)
-
+        
+        # Frequencies: 2^0, 2^1, ..., 2^(L-1)
+        # [L] -> [1, L]
+        bands = (2.0 ** torch.arange(self.L, device=device)).view(1, -1) 
+        
+        # [N, 3, 1] * [1, 1, L] -> [N, 3, L]
+        # coord * freq * pi
+        x = xyz.unsqueeze(-1) * bands.unsqueeze(1) * math.pi
+        
+        # sin, cos -> [N, 3, L, 2] -> flatten -> [N, 60]
+        sin_x = torch.sin(x)
+        cos_x = torch.cos(x)
+        pe = torch.cat([sin_x, cos_x], dim=-1).view(B, -1)
+        return pe
+    
     def forward(self, xyz, scale, rotation, opacity, sh_features):
-        # Geometry stream
-        xyz_norm = torch.tanh(xyz / 20.0)
-        ipe = self.integrated_positional_encoding(xyz_norm, scale)
-        westin = self.compute_westin_metrics(scale)
+        """
+        xyz: [N, 3] - 이미 정규화된 값 (20으로 나눈 값)
+        scale: [N, 3] - 이미 정규화된 값 (20으로 나눈 값)
+        rotation: [N, 4]
+        opacity: [N, 1]
+        sh_features: [N, 16, 3] for degree 3
+        """
+        # Positional encoding for xyz (이미 정규화된 값을 받음)
+        xyz_normalized = torch.tanh(xyz)
+
+        pe = self.positional_encoding(xyz_normalized)  # [N, 60]
+
+        # scale은 이미 정규화된 값을 받음
         scale_log = torch.log(scale + 1e-9)
-        cov_feat = self.compute_cov_features(scale, rotation)
-        geo_in = torch.cat([ipe, scale_log, westin, cov_feat], dim=1)
-        f_geo = self.geo_mlp(geo_in)
+        
+        # Flatten sh_features: [N, 16, 3] -> [N, 48]
+        sh_flat = sh_features.view(sh_features.shape[0], -1)  # [N, 48]
+        
+        # Concatenate all features: 60 (pe) + 3 (scale) + 4 (rotation) + 1 (opacity) + 48 (sh) = 116
+        features = torch.cat([pe, scale_log, rotation, opacity, sh_flat], dim=1)  # [N, 116]
+        
+        # Normalize and encode
+        features = self.input_norm(features)
+        encoded = self.mlp(features)  # [N, 128]
+        
+        return encoded
 
-        # Appearance stream
-        if sh_features.dim() == 2:
-            sh_features = sh_features.view(-1, 16, 3)
-        sh_dc = sh_features[:, 0, :]
-        sh_rest = sh_features[:, 1:, :].reshape(sh_features.shape[0], -1)
-        sh_rest_comp = self.sh_compressor(sh_rest)
-        app_in = torch.cat([sh_dc, sh_rest_comp, opacity], dim=1)
-        f_app = self.app_mlp(app_in)
 
-        # Fusion
-        f_fused = torch.cat([f_geo, f_app], dim=1)
-        out = self.final_head(f_fused)
-        return out
+class ATGM(nn.Module):
+    """
+    Attribute-Text Gating Module: 3D 특징과 텍스트 특징을 결합하여 유사도 계산
+    """
+    def __init__(self, dim=128):
+        super().__init__()
+        self.gate_mlp = nn.Linear(dim, dim)  # Text -> Gate
+        self.temperature = 0.1
+    
+    def forward(self, f_3d, f_text):
+        """
+        Args:
+            f_3d: [N, 128] - 3D 가우시안 특징
+            f_text: [1, T, 128] or [T, 128] - 텍스트 토큰 특징
+        
+        Returns:
+            scores: [N, 1] - 각 가우시안과 텍스트의 유사도
+        """
+        # 1. 문장 임베딩 추출 (Pooling Strategy)
+        if f_text.dim() == 3:
+            # BERT의 경우: 0번째 토큰이 [CLS] (문장 전체 요약)
+            # 평균(mean) 대신 [CLS]를 사용합니다.
+            sentence_emb = f_text.mean(dim=1) # [1, 128]
+            
+            # (옵션) 만약 CLIP이라면: CLIP은 자체적인 pooled output을 제공하므로 그걸 쓰는게 좋음
+            # (옵션) 만약 평균을 꼭 써야 한다면: Attention Pooling이 Mean보다 좋음
+        else:
+            sentence_emb = f_text # 이미 [1, 128]로 들어온 경우
+        
+        # f_3d: [N, 128], f_text: [1, 128]
+        # 1. Gating
+        gate = torch.sigmoid(self.gate_mlp(sentence_emb))  # [1, 128]
+        f_modulated = f_3d * (1.0 + gate)  # [N, 128]
+        
+        # 2. Cosine Similarity
+        f_mod_norm = F.normalize(f_modulated, p=2, dim=1)
+        text_norm = F.normalize(sentence_emb, p=2, dim=1)
+        scores = torch.sum(f_mod_norm * text_norm, dim=1, keepdim=True)
+        
+        # Temperature scaling for logits (temperature = 0.1)
+        scores = scores / self.temperature
+        
+        return f_modulated, scores  # [N, 1] - logits 범위
