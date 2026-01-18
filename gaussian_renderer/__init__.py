@@ -81,7 +81,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
-    t_token=pc.get_text(sentence).to("cuda")
+    cls_token, t_token=pc.get_text(sentence)
     t_token=pc.mlp1(t_token)
     scales = None
     rotations = None
@@ -126,7 +126,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         neighbor_indices = pc._neighbor_indices  # 캐시된 결과 사용
     
-    x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features)
+    x = pc.attribute_encoder(xyz, scale, rotation, opacity, sh_features, cls_token)
     
     p = pc.mlp3(pc.get_xyz)
     p = F.normalize(p, dim=-1)

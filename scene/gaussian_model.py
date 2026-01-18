@@ -51,7 +51,7 @@ class GaussianModel:
         self.text_language_feature =torch.empty(0)
         self.mlp3=MLP3(3,128).to("cuda")
         self.mlp1=MLP1(1024,128).to("cuda")
-        self.attribute_encoder=AttributeEncoder(out_dim=128, owner=self).to("cuda")
+        self.attribute_encoder=AttributeEncoder(out_dim=128, owner=self, text_dim=1024).to("cuda")
 
         
         self.max_radii2D = torch.empty(0)
@@ -78,8 +78,9 @@ class GaussianModel:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
           outputs = self.model(**inputs)
+          cls_token=outputs[0][:,0,:]
           outputs=outputs[0][:,1:-1,:]
-        return outputs
+        return cls_token, outputs
     
     def capture(self, include_feature=False):
         if include_feature:

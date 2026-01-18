@@ -79,7 +79,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         while len(viewpoint_stack)!=0:
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-            text_feature=gaussians.get_text(viewpoint_cam.sentence).to("cuda")
+            cls_token, text_feature = gaussians.get_text(viewpoint_cam.sentence)
             for i in range(len(viewpoint_cam.sentence)):
                 iter_start.record()
                 render_pkg = render(viewpoint_cam, gaussians, pipe, background, opt,sentence=viewpoint_cam.sentence[i],ratio=ratio)

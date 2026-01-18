@@ -90,9 +90,15 @@ class AttributeEncoder(nn.Module):
     - Geometry Stream: IPE + Explicit Shape Metrics (Westin's) + Covariance
     - Appearance Stream: Disentangled SH (DC/Rest) + Opacity
     """
-    def __init__(self, out_dim=128, owner=None):
+    def __init__(self, out_dim=128, owner=None, text_dim=1024):
         super().__init__()
         self._owner = owner
+
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_dim, 32),
+            nn.LayerNorm(32), # 정규화 (다른 피처와 스케일 맞추기 위해 중요)
+            nn.ReLU()
+        )
 
         # -----------------------------------------------------------
         # 1. Geometry Stream
@@ -163,7 +169,7 @@ class AttributeEncoder(nn.Module):
     def compute_cov_features(self, scale, rotation):
         return torch.zeros(scale.shape[0], 6, device=scale.device)
 
-    def forward(self, xyz, scale, rotation, opacity, sh_features):
+    def forward(self, xyz, scale, rotation, opacity, sh_features, cls_token):
         # Geometry stream
         ipe = self.integrated_positional_encoding(xyz, scale)
         westin = self.compute_westin_metrics(scale)
@@ -190,7 +196,8 @@ class AttributeEncoder(nn.Module):
             knn_idx = getattr(self._owner, "_neighbor_indices", None)
 
         if knn_idx is not None:
-            f_fused = self.dual_scale_context_block(f_fused, xyz, scale, rotation, knn_idx)
+            cls_token = self.text_proj(cls_token)
+            f_fused = self.dual_scale_context_block(f_fused, xyz, scale, rotation, knn_idx, cls_token)
 
         out = self.final_head(f_fused)
         return out
@@ -245,7 +252,7 @@ class ContextBlock(nn.Module):
 
         self.out_proj = nn.Linear(in_dim, in_dim)
 
-    def forward(self, f_self, xyz, scale, rot, knn_idx):
+    def forward(self, f_self, xyz, scale, rot, knn_idx, cls_token):
         """
         Args:
             f_self: [N, C] (AttributeEncoder에서 나온 Point-wise Feature)
@@ -307,7 +314,7 @@ class ContextBlock(nn.Module):
         # =======================================================
 
         # Query: 나 자신
-        q = self.to_q(f_self).unsqueeze(1)  # [N, 1, 32]
+        q = self.to_q(f_self + cls_token).unsqueeze(1)  # [N, 1, 32]
 
         # Key & Value: 이웃의 정보 (Feature + Geometric Context)
         # "내 오른쪽(Geo)에 있는 노란색(Feature)"
@@ -354,7 +361,7 @@ class DualScaleContextBlock(nn.Module):
             nn.Linear(in_dim, in_dim)  # 원래 차원으로 복구
         )
 
-    def forward(self, f_self, xyz, scale, rot, knn_idx_large):
+    def forward(self, f_self, xyz, scale, rot, knn_idx_large, cls_token):
         """
         knn_idx_large: [N, 64] (넉넉하게 검색된 이웃 인덱스)
         """
@@ -372,8 +379,8 @@ class DualScaleContextBlock(nn.Module):
 
         # --- 병렬 처리 (Parallel Processing) ---
         # 각각의 관점에서 Context를 추출
-        f_micro = self.micro_attn(f_self, xyz, scale, rot, micro_idx)
-        f_macro = self.macro_attn(f_self, xyz, scale, rot, macro_idx)
+        f_micro = self.micro_attn(f_self, xyz, scale, rot, micro_idx, cls_token)
+        f_macro = self.macro_attn(f_self, xyz, scale, rot, macro_idx, cls_token)
 
         # --- 융합 (Fusion) ---
         # 두 정보를 이어 붙임 (Concat)
