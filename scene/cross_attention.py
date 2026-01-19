@@ -134,11 +134,10 @@ class AttributeEncoder(nn.Module):
         B, _ = xyz.shape
         device = xyz.device
 
-        scale_safe = scale / 20.0
         freqs = 2.0 ** torch.arange(self.L, device=device).view(1, -1)
         args = xyz.unsqueeze(-1) * freqs.unsqueeze(1) * math.pi
 
-        scale_input = scale_safe.unsqueeze(-1)
+        scale_input = scale.unsqueeze(-1)
         var = scale_input ** 2
         coeff = (freqs * math.pi) ** 2 * var
         attenuation = torch.exp(-0.5 * coeff)
@@ -161,8 +160,7 @@ class AttributeEncoder(nn.Module):
 
     def forward(self, xyz, scale, rotation, opacity, sh_features):
         # Geometry stream
-        xyz_norm = torch.tanh(xyz / 20.0)
-        ipe = self.integrated_positional_encoding(xyz_norm, scale)
+        ipe = self.integrated_positional_encoding(xyz, scale)
         westin = self.compute_westin_metrics(scale)
         scale_log = torch.log(scale + 1e-9)
 
