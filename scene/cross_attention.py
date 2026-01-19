@@ -86,46 +86,60 @@ class MLP3(nn.Module):
 
 class AttributeEncoder(nn.Module):
     """
-    Dual-Stream Attribute Encoder (No KNN)
-    - Geometry Stream: IPE + Explicit Shape Metrics (Westin's) + Covariance
-    - Appearance Stream: Disentangled SH (DC/Rest) + Opacity
+    Triple-Stream Attribute Encoder
+    - Position Stream (pos_mlp): Integrated Positional Encoding (IPE)
+    - Geometry Stream (geo_mlp): Scale + Westin Metrics + Rotation + Opacity
+    - Appearance Stream (app_mlp): Disentangled SH (DC/Rest) + Opacity
     """
     def __init__(self, out_dim=128):
         super().__init__()
 
         # -----------------------------------------------------------
-        # 1. Geometry Stream
+        # 1. Position Stream (IPE)
         # -----------------------------------------------------------
         self.L = 10
-        self.geo_input_dim = 60 + 3 + 4 + 4 + 1
-        self.geo_mlp = nn.Sequential(
-            nn.Linear(self.geo_input_dim, 64),
-            nn.LayerNorm(64),
+        self.ipe_dim = 60  # 3 * 2 * L (sin + cos for each xyz component)
+        self.pos_mlp = nn.Sequential(
+            nn.Linear(self.ipe_dim, 32),
+            nn.LayerNorm(32),
             nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.LayerNorm(64),
+            nn.Linear(32, 32),
+            nn.LayerNorm(32),
             nn.ReLU()
         )
 
         # -----------------------------------------------------------
-        # 2. Appearance Stream
+        # 2. Geometry Stream
+        # -----------------------------------------------------------
+        self.geo_input_dim = 3 + 4 + 4 + 1  # scale_log + westin + rotation + opacity
+        self.geo_mlp = nn.Sequential(
+            nn.Linear(self.geo_input_dim, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.LayerNorm(32),
+            nn.ReLU()
+        )
+
+        # -----------------------------------------------------------
+        # 3. Appearance Stream
         # -----------------------------------------------------------
         self.sh_compressor = nn.Linear(45, 16)
-        self.app_input_dim = 3 + 16 + 1
+        self.app_input_dim = 3 + 16 + 1  # sh_dc + sh_rest_comp + opacity
         self.app_mlp = nn.Sequential(
-            nn.Linear(self.app_input_dim, 64),
-            nn.LayerNorm(64),
+            nn.Linear(self.app_input_dim, 32),
+            nn.LayerNorm(32),
             nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.LayerNorm(64),
+            nn.Linear(32, 32),
+            nn.LayerNorm(32),
             nn.ReLU()
         )
 
         # -----------------------------------------------------------
-        # 3. Final Projection
+        # 4. Final Projection
         # -----------------------------------------------------------
         self.final_head = nn.Sequential(
-            nn.Linear(64 + 64, 128),
+            nn.Linear(32 + 32 + 32, 128),  # pos + geo + app
             nn.ReLU(),
             nn.Linear(128, out_dim)
         )
@@ -159,12 +173,14 @@ class AttributeEncoder(nn.Module):
         return torch.stack([linearity, planarity, sphericity, anisotropy], dim=1)
 
     def forward(self, xyz, scale, rotation, opacity, sh_features):
-        # Geometry stream
+        # Position stream (IPE)
         ipe = self.integrated_positional_encoding(xyz, scale)
+        f_pos = self.pos_mlp(ipe)
+
+        # Geometry stream
         westin = self.compute_westin_metrics(scale)
         scale_log = torch.log(scale + 1e-9)
-
-        geo_in = torch.cat([ipe, scale_log, westin, rotation, opacity], dim=1)
+        geo_in = torch.cat([scale_log, westin, rotation, opacity], dim=1)
         f_geo = self.geo_mlp(geo_in)
 
         # Appearance stream
@@ -177,6 +193,6 @@ class AttributeEncoder(nn.Module):
         f_app = self.app_mlp(app_in)
 
         # Fusion
-        f_fused = torch.cat([f_geo, f_app], dim=1)
+        f_fused = torch.cat([f_pos, f_geo, f_app], dim=1)
         out = self.final_head(f_fused)
         return out
