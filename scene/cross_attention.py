@@ -216,9 +216,9 @@ class ContextBlock(nn.Module):
         self.geo_input_dim = 3 + 1 + 3 + 3 + 3 + 4
 
         self.geo_mlp = nn.Sequential(
-            nn.Linear(self.geo_input_dim, 64),
+            nn.Linear(self.geo_input_dim, head_dim),
             nn.ReLU(),
-            nn.Linear(64, in_dim)  # Feature 차원과 맞춤 (Positional Embedding)
+            nn.Linear(head_dim, in_dim)  # Feature 차원과 맞춤 (Positional Embedding)
         )
 
         # -------------------------------------------------------
@@ -270,20 +270,21 @@ class ContextBlock(nn.Module):
         # =======================================================
 
         # (A) 물리적 상대 위치 & 거리
-        rel_xyz = xyz_neigh - xyz.unsqueeze(1)  # [N, K, 3]
+        xyz_exp = xyz.unsqueeze(1)  # [N, 1, 3] - 재사용
+        rel_xyz = xyz_neigh - xyz_exp  # [N, K, 3]
         dist = torch.norm(rel_xyz, dim=-1, keepdim=True)  # [N, K, 1]
 
         # (B) Broadcasting 준비
         scale_self_exp = scale.unsqueeze(1)  # [N, 1, 3]
-        scale_neigh_exp = scale_neigh        # [N, K, 3]
+        eps = 1e-9
 
         # (C) Dual Normalization (내 기준 vs 이웃 기준)
         # 엡실론(1e-9) 더해서 0으로 나누기 방지
-        norm_rel_self = rel_xyz / (scale_self_exp + 1e-9)
-        norm_rel_neigh = rel_xyz / (scale_neigh_exp + 1e-9)
+        norm_rel_self = rel_xyz / (scale_self_exp + eps)
+        norm_rel_neigh = rel_xyz / (scale_neigh + eps)
 
         # (D) Contextual Properties
-        log_scale_neigh = torch.log(scale_neigh + 1e-9)
+        log_scale_neigh = torch.log(scale_neigh + eps)
         rot_self_exp = rot.unsqueeze(1).expand(-1, K, -1)  # [N, K, 4]
 
         # (E) 입력 벡터 결합 (총 17차원)
@@ -358,14 +359,14 @@ class DualScaleContextBlock(nn.Module):
 
         # --- [핵심] 인덱스 슬라이싱 (Index Slicing) ---
 
-        # 1. Micro Group: 아주 가까운 8개
+        # 1. Micro Group: 아주 가까운 16개
         # 목적: 젓가락의 매끈한 표면 학습
         micro_idx = knn_idx_large[:, :8]
 
-        # 2. Macro Group: 건너뛰며 뽑은 8개 (Dilated)
+        # 2. Macro Group: 건너뛰며 뽑은 16개 (Dilated)
         # 목적: 젓가락 옆에 있는 그릇 감지
-        # 8번부터 4칸 간격으로: [8, 12, 16, 20, 24, 28, 32, 36]
-        macro_idx = knn_idx_large[:, 8:40:4]
+        # 16번부터 4칸 간격으로: [16, 20, 24, ..., 60]
+        macro_idx = knn_idx_large[:, 8:32:4]
 
         # --- 병렬 처리 (Parallel Processing) ---
         # 각각의 관점에서 Context를 추출
