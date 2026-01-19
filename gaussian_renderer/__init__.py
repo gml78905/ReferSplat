@@ -109,9 +109,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
     # Extract attributes
-    max_coord = torch.max(torch.abs(pc.get_xyz.detach())).item() + 0.1
-    xyz = pc.get_xyz / max_coord  # [N, 3]
-    scale = pc.get_scaling / max_coord  # [N, 3]
+    max_coord = torch.quantile(torch.abs(pc.get_xyz.detach()), 0.95).item()
+    xyz = pc.get_xyz / max_coord  # [N, 3] - 정규화
+    scale = pc.get_scaling / max_coord  # [N, 3] - 정규화
     rotation = pc.get_rotation  # [N, 4]
     opacity = pc.get_opacity  # [N, 1]
     

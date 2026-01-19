@@ -98,7 +98,7 @@ class AttributeEncoder(nn.Module):
         # 1. Geometry Stream
         # -----------------------------------------------------------
         self.L = 10
-        self.geo_input_dim = 60 + 3 + 4 + 6
+        self.geo_input_dim = 60 + 3 + 4 + 4 + 1
         self.geo_mlp = nn.Sequential(
             nn.Linear(self.geo_input_dim, 32),
             nn.LayerNorm(32),
@@ -160,16 +160,13 @@ class AttributeEncoder(nn.Module):
 
         return torch.stack([linearity, planarity, sphericity, anisotropy], dim=1)
 
-    def compute_cov_features(self, scale, rotation):
-        return torch.zeros(scale.shape[0], 6, device=scale.device)
-
     def forward(self, xyz, scale, rotation, opacity, sh_features):
         # Geometry stream
         ipe = self.integrated_positional_encoding(xyz, scale)
         westin = self.compute_westin_metrics(scale)
         scale_log = torch.log(scale + 1e-9)
-        cov_feat = self.compute_cov_features(scale, rotation)
-        geo_in = torch.cat([ipe, scale_log, westin, cov_feat], dim=1)
+
+        geo_in = torch.cat([ipe, scale_log, westin, rotation, opacity], dim=1)
         f_geo = self.geo_mlp(geo_in)
 
         # Appearance stream
