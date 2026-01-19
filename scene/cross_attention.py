@@ -361,12 +361,12 @@ class DualScaleContextBlock(nn.Module):
 
         # 1. Micro Group: 아주 가까운 16개
         # 목적: 젓가락의 매끈한 표면 학습
-        micro_idx = knn_idx_large[:, :8]
+        micro_idx = knn_idx_large[:, :16]
 
         # 2. Macro Group: 건너뛰며 뽑은 16개 (Dilated)
         # 목적: 젓가락 옆에 있는 그릇 감지
         # 16번부터 4칸 간격으로: [16, 20, 24, ..., 60]
-        macro_idx = knn_idx_large[:, 8:32:4]
+        macro_idx = knn_idx_large[:, 16:64:4]
 
         # --- 병렬 처리 (Parallel Processing) ---
         # 각각의 관점에서 Context를 추출
