@@ -115,7 +115,10 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
             if not args.include_feature:
                 rendering = output["render"]
             else:
-                rendering = output["language_feature_image"]
+                # language_feature_image: [16, H, W] -> 문장에 해당하는 positive 채널만 1채널 마스크로 사용
+                feat_img = output["language_feature_image"]
+                pos_idx = output["positive_idx"].item()
+                rendering = feat_img[pos_idx:pos_idx + 1]  # [1, H, W]
                 rendering = torch.sigmoid(rendering)
                 rendering = (rendering>=0.5).float()
                 

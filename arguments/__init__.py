@@ -56,8 +56,16 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
-        if g.dinov2_feature_dir:
-            g.dinov2_feature_dir = os.path.abspath(g.dinov2_feature_dir)
+        # 오래된 cfg_args에는 dinov2_feature_dir 필드가 없을 수 있으므로 안전하게 처리
+        dinov2_dir = getattr(g, "dinov2_feature_dir", "")
+        if dinov2_dir:
+            g.dinov2_feature_dir = os.path.abspath(dinov2_dir)
+        else:
+            g.dinov2_feature_dir = ""
+        # 예전 cfg_args에서 누락될 수 있는 새 필드들에 대한 기본값 보정
+        for name in ["lang_feat_dim", "pos_enc_dim", "num_queries", "dinov2_feature_dim", "dinov2_proj_dim"]:
+            if not hasattr(g, name):
+                setattr(g, name, getattr(self, name))
         # g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 

@@ -93,7 +93,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 positive_idx = render_pkg["positive_idx"]
                 if opt.include_feature:
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
-                    mask_logits = rendered_feature[positive_idx:positive_idx+1]
+                    # mask_logits = rendered_feature[positive_idx:positive_idx+1]
+                    mask_logits = rendered_feature.mean(dim=0).unsqueeze(0)
                     mask_loss = bce_loss(mask_logits, gt_mask)
 
                     # DINOv2 alignment: align rendered pc._language_feature with DINOv2 features
