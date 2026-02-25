@@ -13,7 +13,7 @@
 #define CUDA_RASTERIZER_CONFIG_H_INCLUDED
 
 #define NUM_CHANNELS 3 // Default 3, RGB
-#define NUM_CHANNELS_language_feature 1 // CLIP_feature
+#define NUM_CHANNELS_language_feature 16 // Must match lang_feat_dim
 #define BLOCK_X 16
 #define BLOCK_Y 16
 

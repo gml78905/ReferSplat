@@ -75,6 +75,27 @@ python train.py -s <path to ref-lerf dataset> -m <path to output_model>
     |---...
 ```
 
+## DINOv2 Feature Precompute
+Precompute DINOv2 patch features for feature-alignment supervision:
+```bash
+python precompute_dinov2.py \
+  --images_dir <path to ref-lerf dataset>/<scene>/images \
+  --output_dir <path to ref-lerf dataset>/<scene>/dinov2_features
+```
+Expected feature layout:
+```
+<scene>
+|---images
+|---dinov2_features
+|   |---frame_00001.npz
+|   |---frame_00002.npz
+|   |---...
+```
+Then pass `--dinov2_feature_dir` to `train.py` and ensure `--dinov2_feature_dim` matches your DINOv2 model.
+Note: `--lang_feat_dim` must match `NUM_CHANNELS_language_feature` in
+`submodules/langsplat-rasterization/cuda_rasterizer/config.h`, and changing it
+requires rebuilding the rasterizer extension.
+
 ## Render
 ```bash
 # Basic (choose latest .pth inside the model output directory):

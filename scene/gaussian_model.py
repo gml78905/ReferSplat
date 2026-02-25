@@ -15,7 +15,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 import math
-from .cross_attention import MLP1,MLP2,MLP3,CrossAttention  
+from .cross_attention import MLP1, MLP2, MLP3, CrossAttention
+from .position import PositionEmbeddingCoordsSine
+from .refer_transformer import ReferTransformer
 
                        
 class GaussianModel:
@@ -38,7 +40,15 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int):
+    def __init__(
+        self,
+        sh_degree: int,
+        lang_feat_dim=16,
+        pos_enc_dim=64,
+        num_queries=16,
+        dinov2_feature_dim=768,
+        dinov2_proj_dim=16,
+    ):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -48,11 +58,23 @@ class GaussianModel:
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
         self._language_feature = None
-        self.feature_project=None 
-        self.text_language_feature =torch.empty(0)
-        self.mlp2=MLP2(16,128).to("cuda")
-        self.mlp3=MLP3(3,128).to("cuda")
-        self.mlp1=MLP1(1024,128).to("cuda")
+        self.feature_project = None
+        self.text_language_feature = torch.empty(0)
+        self.lang_feat_dim = lang_feat_dim
+        self.pos_enc_dim = pos_enc_dim
+        self.num_queries = num_queries
+        self.dinov2_feature_dim = dinov2_feature_dim
+        self.dinov2_proj_dim = dinov2_proj_dim
+        self.fusion_dim = 128
+        if self.dinov2_proj_dim != self.lang_feat_dim:
+            raise ValueError("dinov2_proj_dim must match lang_feat_dim")
+        self.mlp2 = MLP2(lang_feat_dim, self.fusion_dim).to("cuda")
+        self.mlp3 = MLP3(pos_enc_dim, self.fusion_dim).to("cuda")
+        self.mlp1 = MLP1(1024, self.fusion_dim).to("cuda")
+        self.pos_encoder = PositionEmbeddingCoordsSine(
+            normalize=True, pos_type="sine"
+        ).to("cuda")
+        self.pos_to_lang = nn.Linear(pos_enc_dim, lang_feat_dim).to("cuda")
 
         
         self.max_radii2D = torch.empty(0)
@@ -70,13 +92,27 @@ class GaussianModel:
         for param in self.model.parameters():
             param.requires_grad = False
 
-        self.cross_attention=CrossAttention(dim=128, num_heads=1).to("cuda")
+        self.cross_attention = CrossAttention(dim=self.fusion_dim, num_heads=1).to("cuda")
+        self.refer_transformer = ReferTransformer(
+            d_model=self.fusion_dim, nhead=4, num_queries=num_queries
+        ).to("cuda")
+        self.render_proj = nn.Linear(self.fusion_dim, lang_feat_dim).to("cuda")
+        self.mask_head = nn.Conv2d(lang_feat_dim, 1, kernel_size=1).to("cuda")
+        self.dino_proj = nn.Conv2d(dinov2_feature_dim, dinov2_proj_dim, kernel_size=1).to("cuda")
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
           outputs = self.model(**inputs)
-          outputs=outputs[0][:,1:-1,:]
+          outputs=outputs[0][:,:-1,:]
         return outputs
+
+    def get_positional_embedding(self):
+        xyz = self.get_xyz.unsqueeze(0)
+        xyz_min = xyz.min(dim=1).values
+        xyz_max = xyz.max(dim=1).values
+        input_range = [xyz_min, xyz_max]
+        pos = self.pos_encoder(xyz, num_channels=self.pos_enc_dim, input_range=input_range)
+        return pos.squeeze(0)
     
     def capture(self, include_feature=False):
         if include_feature:
@@ -98,6 +134,11 @@ class GaussianModel:
                 self.mlp2.state_dict(),
                 self.mlp3.state_dict(),
                 self.cross_attention.state_dict(),
+                self.refer_transformer.state_dict(),
+                self.render_proj.state_dict(),
+                self.mask_head.state_dict(),
+                self.dino_proj.state_dict(),
+                self.pos_to_lang.state_dict(),
             )
         else:
             return (
@@ -116,7 +157,40 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 17:
+        if len(model_args) >= 22:
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            cross_attention_params,
+            refer_transformer_params,
+            render_proj_params,
+            mask_head_params,
+            dino_proj_params,
+            pos_to_lang_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.refer_transformer.load_state_dict(refer_transformer_params)
+            self.render_proj.load_state_dict(render_proj_params)
+            self.mask_head.load_state_dict(mask_head_params)
+            self.dino_proj.load_state_dict(dino_proj_params)
+            self.pos_to_lang.load_state_dict(pos_to_lang_params)
+        elif len(model_args) == 17:
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -250,7 +324,7 @@ class GaussianModel:
         
         if training_args.include_feature:
             if self._language_feature is None or self._language_feature.shape[0] != self._xyz.shape[0]:
-                language_feature = torch.zeros((self._xyz.shape[0], 16), device="cuda")
+                language_feature = torch.zeros((self._xyz.shape[0], self.lang_feat_dim), device="cuda")
                 self._language_feature = nn.Parameter(language_feature.requires_grad_(True))
                 
             l = [
@@ -258,7 +332,11 @@ class GaussianModel:
                  {'params': self.mlp1.parameters(), 'lr': training_args.mlp_lr, "name": "mlp1"},
                  {'params': self.mlp2.parameters(), 'lr': training_args.mlp_lr, "name": "mlp2"},
                  {'params': self.mlp3.parameters(), 'lr': training_args.mlp_lr, "name": "mlp3"},
-                 {'params': self.cross_attention.parameters(), 'lr': training_args.mlp_lr, "name": "cross_attention"},
+                 {'params': self.pos_to_lang.parameters(), 'lr': training_args.mlp_lr, "name": "pos_to_lang"},
+                 {'params': self.refer_transformer.parameters(), 'lr': training_args.mlp_lr, "name": "refer_transformer"},
+                 {'params': self.render_proj.parameters(), 'lr': training_args.mlp_lr, "name": "render_proj"},
+                 {'params': self.mask_head.parameters(), 'lr': training_args.mlp_lr, "name": "mask_head"},
+                 {'params': self.dino_proj.parameters(), 'lr': training_args.mlp_lr, "name": "dino_proj"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)

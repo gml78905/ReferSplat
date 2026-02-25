@@ -54,8 +54,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
-    t_token=pc.get_text(sentence).to("cuda")
-    t_token=pc.mlp1(t_token)
+    text_token=pc.get_text(sentence).to("cuda")
+    text_token=pc.mlp1(text_token)
+    cls_token, t_token = text_token[:,0:1,:], text_token[:,1:,:]
     scales = None
     rotations = None
     cov3D_precomp = None
@@ -82,37 +83,32 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
     
 
-    p=pc.mlp3(pc.get_xyz)
-    p=F.normalize(p,dim=-1)
-    x=pc.mlp2(pc._language_feature)
-    g=pc.cross_attention(x,p,t_token)
-    features=torch.matmul(g,t_token.transpose(-1,-2)).squeeze(0)
-    features=features.sum(dim=-1,keepdim=True)
+    pos_embed = pc.get_positional_embedding()
+    x = pc.mlp2(pc._language_feature + pc.pos_to_lang(pos_embed))
+    query, relation_logits = pc.refer_transformer(x, t_token)
 
-    
-    sorted_indices = torch.argsort(features, descending=True)
-    indices = sorted_indices[:int(len(sorted_indices) * ratio)].squeeze(1)
-   
-    selected_tensors = g[indices]
+    # Positive = query with highest similarity to BERT [CLS]; rest = negative. Render only positive.
+    # query [16, 128], cls_token [1, 1, 128] -> cls_token.squeeze() [128] -> similarity [16]
+    similarity = query @ cls_token.squeeze()
+    positive_idx = similarity.argmax()
 
-    mean_tensor = torch.mean(selected_tensors, dim=0, keepdim=True)
-
-    
+    relation_scores = relation_logits.transpose(0, 1).contiguous()  # [P, num_queries]
 
     rendered_image, language_feature_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
         colors_precomp = colors_precomp,
-        language_feature_precomp = features,
+        language_feature_precomp= relation_scores,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
-    
+
     return {"render": rendered_image,
             "language_feature_image": language_feature_image,
+            "positive_idx": positive_idx,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "mean_tensor": mean_tensor}
+            "relation_logits": relation_logits}

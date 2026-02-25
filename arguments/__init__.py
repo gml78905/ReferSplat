@@ -39,6 +39,12 @@ class ModelParams(ParamGroup):
         self._source_path = "LangSplat/data/bed"
         self._model_path = "LangSplat/output/bed" 
         self._language_features_name = "language_features_dim3"
+        self.lang_feat_dim = 16
+        self.dinov2_feature_dir = ""
+        self.dinov2_feature_dim = 768
+        self.dinov2_proj_dim = 16
+        self.pos_enc_dim = 64
+        self.num_queries = 16
         self._images = "images"
         self._resolution = -1
         self._white_background = False
@@ -50,6 +56,8 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        if g.dinov2_feature_dir:
+            g.dinov2_feature_dir = os.path.abspath(g.dinov2_feature_dir)
         # g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 
@@ -84,6 +92,10 @@ class OptimizationParams(ParamGroup):
         self.mlp_lr = 0.0001
         self.cross_attention_lr = 0.0001
         self.language_feature_lr = 0.0025
+        self.dino_align_weight = 1.0
+        self.mask_loss_weight = 1.0
+        self.dice_loss_weight = 0.0
+        self.contrastive_weight = 0.1
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

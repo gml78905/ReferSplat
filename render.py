@@ -139,7 +139,14 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
                
 def render_sets(dataset : ModelParams,model_path, pipeline : PipelineParams, skip_train : bool, skip_test : bool, args):
     with torch.no_grad():  
-        gaussians = GaussianModel(dataset.sh_degree)
+        gaussians = GaussianModel(
+            dataset.sh_degree,
+            lang_feat_dim=dataset.lang_feat_dim,
+            pos_enc_dim=dataset.pos_enc_dim,
+            num_queries=dataset.num_queries,
+            dinov2_feature_dim=dataset.dinov2_feature_dim,
+            dinov2_proj_dim=dataset.dinov2_proj_dim,
+        )
         scene = Scene(dataset, gaussians, shuffle=False)
         checkpoint = os.path.join(args.model_path, model_path)
         (model_params, first_iter) = torch.load(checkpoint,map_location=f'cuda:{torch.cuda.current_device()}')

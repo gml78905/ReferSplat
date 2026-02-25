@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import random
 import numpy as np
 from random import randint
-from utils.loss_utils import l1_loss, ssim,bce_loss,dice_loss,multi_pos_cross_entropy
+from utils.loss_utils import l1_loss, ssim, bce_loss, dice_loss
 from gaussian_renderer import render
 import sys
 from scene import Scene, GaussianModel
@@ -47,7 +47,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     train_start_time = time.time()
     
     first_iter = 0
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(
+        dataset.sh_degree,
+        lang_feat_dim=dataset.lang_feat_dim,
+        pos_enc_dim=dataset.pos_enc_dim,
+        num_queries=dataset.num_queries,
+        dinov2_feature_dim=dataset.dinov2_feature_dim,
+        dinov2_proj_dim=dataset.dinov2_proj_dim,
+    )
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
@@ -79,29 +86,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         while len(viewpoint_stack)!=0:
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-            text_feature=gaussians.get_text(viewpoint_cam.sentence).to("cuda")
             for i in range(len(viewpoint_cam.sentence)):
                 iter_start.record()
-                render_pkg = render(viewpoint_cam, gaussians, pipe, background, opt,sentence=viewpoint_cam.sentence[i],ratio=ratio)
-                language_feature,mean_tensor=render_pkg["language_feature_image"],render_pkg["mean_tensor"]
+                render_pkg = render(viewpoint_cam, gaussians, pipe, background, opt, sentence=viewpoint_cam.sentence[i], ratio=ratio)
+                rendered_feature = render_pkg["language_feature_image"]
+                positive_idx = render_pkg["positive_idx"]
                 if opt.include_feature:
-                    features=gaussians.mlp1(text_feature)
-                    features=torch.mean(features, dim=1)
-                    mean_tensor=F.normalize(mean_tensor,dim=1)
-                    features=F.normalize(features,dim=1)
-
-                    cosine_similarities=(torch.matmul(mean_tensor,features.T)/0.1).to("cuda")
-                    
-                    sentence_tensor = torch.zeros(len(viewpoint_cam.sentence))
-                    
-                    sentence_tensor[i] = 1
-                    current_category = viewpoint_cam.category[i]
-                    category_indices = [idx for idx, cat in enumerate(viewpoint_cam.category) if cat == current_category]
-                    sentence_tensor[category_indices] = 1
-                    sentence_tensor = sentence_tensor.unsqueeze(0).to("cuda")
-                    com_loss = multi_pos_cross_entropy(cosine_similarities, sentence_tensor)
                     gt_mask = viewpoint_cam.gt_mask[viewpoint_cam.category[i]].to("cuda")
-                    loss = bce_loss(language_feature, gt_mask)+0.1*com_loss
+                    mask_logits = rendered_feature[positive_idx:positive_idx+1]
+                    mask_loss = bce_loss(mask_logits, gt_mask)
+
+                    loss = mask_loss
                     loss.backward()
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)

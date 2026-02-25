@@ -2,6 +2,7 @@
 import os
 import pickle
 import torch
+import torch.nn.functional as F
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
@@ -50,6 +51,7 @@ class Camera(nn.Module):
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+        self._dinov2_cache = {}
     def get_language_feature(self, language_feature_dir, feature_level):
         language_feature_name = os.path.join(language_feature_dir, self.image_name)
         seg_map = torch.from_numpy(np.load(language_feature_name + '_s.npy'))
@@ -77,6 +79,47 @@ class Camera(nn.Module):
         point_feature = point_feature1.reshape(self.image_height, self.image_width, -1).permute(2, 0, 1)
        
         return point_feature.cuda(), mask.cuda()
+
+    def get_dinov2_feature(self, feature_dir, expected_dim=None, target_hw=None):
+        if feature_dir is None:
+            raise ValueError("dinov2 feature_dir is None")
+        if target_hw is None:
+            target_hw = (self.image_height, self.image_width)
+
+        cache_key = (feature_dir, target_hw, expected_dim)
+        if cache_key in self._dinov2_cache:
+            return self._dinov2_cache[cache_key]
+
+        npz_path = os.path.join(feature_dir, self.image_name + ".npz")
+        npy_path = os.path.join(feature_dir, self.image_name + ".npy")
+        if os.path.exists(npz_path):
+            data = np.load(npz_path)
+            feat = data["feat"]
+        elif os.path.exists(npy_path):
+            feat = np.load(npy_path)
+        else:
+            raise FileNotFoundError(f"Missing DINOv2 feature for {self.image_name}")
+
+        if feat.ndim != 3:
+            raise ValueError(f"Unexpected DINOv2 feature shape: {feat.shape}")
+
+        if expected_dim is not None and feat.shape[0] != expected_dim:
+            if feat.shape[-1] == expected_dim:
+                feat = feat.transpose(2, 0, 1)
+            else:
+                raise ValueError(
+                    f"DINOv2 feature dim mismatch: got {feat.shape}, expected {expected_dim}"
+                )
+
+        feat_tensor = torch.from_numpy(feat).float().unsqueeze(0)
+        if feat_tensor.shape[-2:] != target_hw:
+            feat_tensor = F.interpolate(
+                feat_tensor, size=target_hw, mode="bilinear", align_corners=False
+            )
+
+        feat_tensor = feat_tensor.squeeze(0).to(self.data_device)
+        self._dinov2_cache[cache_key] = feat_tensor
+        return feat_tensor
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
