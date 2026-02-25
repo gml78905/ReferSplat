@@ -94,6 +94,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     relation_scores = relation_logits.transpose(0, 1).contiguous()  # [P, num_queries]
 
+    # 1) Render relation_scores for mask supervision (BCE)
     rendered_image, language_feature_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -105,8 +106,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
 
+    # 2) Render pc._language_feature (16-dim) for DINOv2 alignment
+    _, rendered_lang_feature, _ = rasterizer(
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        language_feature_precomp = pc._language_feature,
+        opacities = opacity,
+        scales = scales,
+        rotations = rotations,
+        cov3D_precomp = cov3D_precomp)
+
     return {"render": rendered_image,
             "language_feature_image": language_feature_image,
+            "rendered_lang_feature": rendered_lang_feature,
             "positive_idx": positive_idx,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,

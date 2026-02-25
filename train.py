@@ -96,7 +96,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     mask_logits = rendered_feature[positive_idx:positive_idx+1]
                     mask_loss = bce_loss(mask_logits, gt_mask)
 
-                    loss = mask_loss
+                    # DINOv2 alignment: align rendered pc._language_feature with DINOv2 features
+                    if getattr(dataset, "dinov2_feature_dir", None) and dataset.dinov2_feature_dir:
+                        rendered_lang = render_pkg["rendered_lang_feature"]  # [16, H, W]
+                        gt_dino = viewpoint_cam.get_dinov2_feature(
+                            dataset.dinov2_feature_dir,
+                            expected_dim=dataset.dinov2_feature_dim,
+                            target_hw=(viewpoint_cam.image_height, viewpoint_cam.image_width),
+                        )  # [768, H, W]
+                        gt_dino_proj = gaussians.dino_proj(gt_dino.unsqueeze(0)).squeeze(0)  # [16, H, W]
+                        dino_align_loss = F.mse_loss(rendered_lang, gt_dino_proj)
+                        loss = mask_loss + opt.dino_align_weight * dino_align_loss
+                    else:
+                        loss = mask_loss
+
                     loss.backward()
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)
