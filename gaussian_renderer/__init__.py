@@ -87,9 +87,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     x = pc.mlp2(pc._language_feature + pc.pos_to_lang(pos_embed))
     query, relation_logits = pc.refer_transformer(x, t_token)
 
-    # Positive = query with highest similarity to BERT [CLS]; rest = negative. Render only positive.
-    # query [16, 128], cls_token [1, 1, 128] -> cls_token.squeeze() [128] -> similarity [16]
-    similarity = query @ cls_token.squeeze()
+    # Positive = query with highest cosine similarity to BERT [CLS]
+    # query [16, 128], cls_token [1, 1, 128] -> cls_vec [128]
+    cls_vec = cls_token.squeeze()                     # [128]
+    similarity = F.cosine_similarity(                # [16]
+        query,                                       # [16, 128]
+        cls_vec.unsqueeze(0),                        # [1, 128] -> broadcast to [16, 128]
+        dim=-1,
+        eps=1e-6,
+    )
     positive_idx = similarity.argmax()
 
     relation_scores = relation_logits.transpose(0, 1).contiguous()  # [P, num_queries]
