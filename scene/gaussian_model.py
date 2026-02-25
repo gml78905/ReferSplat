@@ -98,7 +98,10 @@ class GaussianModel:
         ).to("cuda")
         self.render_proj = nn.Linear(self.fusion_dim, lang_feat_dim).to("cuda")
         self.mask_head = nn.Conv2d(lang_feat_dim, 1, kernel_size=1).to("cuda")
+        # Project DINO feature map (C=768) down to C=16 (legacy, kept for backward compatibility)
         self.dino_proj = nn.Conv2d(dinov2_feature_dim, dinov2_proj_dim, kernel_size=1).to("cuda")
+        # New: lift rendered 16-d language feature map back to original DINO feature space (C=768)
+        self.dino_up_proj = nn.Conv2d(dinov2_proj_dim, dinov2_feature_dim, kernel_size=1).to("cuda")
     def get_text(self, text):
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True).to("cuda")
         with torch.no_grad():
@@ -138,6 +141,7 @@ class GaussianModel:
                 self.render_proj.state_dict(),
                 self.mask_head.state_dict(),
                 self.dino_proj.state_dict(),
+                self.dino_up_proj.state_dict(),
                 self.pos_to_lang.state_dict(),
             )
         else:
@@ -157,7 +161,45 @@ class GaussianModel:
             )            
     
     def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) >= 22:
+        # New checkpoints (with DINO up-projection) have 23 entries when include_feature=True.
+        # Older stage-2 checkpoints have 22 entries (no dino_up_proj), and stage-1 checkpoints
+        # use the shorter branches below.
+        if len(model_args) == 23:
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._features_dc, 
+            self._features_rest,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self._language_feature,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            mlp1_params,
+            mlp2_params,
+            mlp3_params,
+            cross_attention_params,
+            refer_transformer_params,
+            render_proj_params,
+            mask_head_params,
+            dino_proj_params,
+            dino_up_proj_params,
+            pos_to_lang_params,
+            ) = model_args
+            self.mlp1.load_state_dict(mlp1_params)
+            self.mlp2.load_state_dict(mlp2_params)
+            self.mlp3.load_state_dict(mlp3_params)
+            self.cross_attention.load_state_dict(cross_attention_params)
+            self.refer_transformer.load_state_dict(refer_transformer_params)
+            self.render_proj.load_state_dict(render_proj_params)
+            self.mask_head.load_state_dict(mask_head_params)
+            self.dino_proj.load_state_dict(dino_proj_params)
+            self.dino_up_proj.load_state_dict(dino_up_proj_params)
+            self.pos_to_lang.load_state_dict(pos_to_lang_params)
+        elif len(model_args) == 22:
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -337,6 +379,7 @@ class GaussianModel:
                  {'params': self.render_proj.parameters(), 'lr': training_args.mlp_lr, "name": "render_proj"},
                  {'params': self.mask_head.parameters(), 'lr': training_args.mlp_lr, "name": "mask_head"},
                  {'params': self.dino_proj.parameters(), 'lr': training_args.mlp_lr, "name": "dino_proj"},
+                 {'params': self.dino_up_proj.parameters(), 'lr': training_args.mlp_lr, "name": "dino_up_proj"},
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)
