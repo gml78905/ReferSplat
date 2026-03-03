@@ -28,9 +28,11 @@ class ParamGroup:
 
     def extract(self, args):
         group = GroupParams()
-        for arg in vars(args).items():
-            if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
-                setattr(group, arg[0], arg[1])
+        self_vars = vars(self)
+        for key, default_value in self_vars.items():
+            arg_name = key[1:] if key.startswith("_") else key
+            value = getattr(args, arg_name, default_value)
+            setattr(group, arg_name, value)
         return group
 
 class ModelParams(ParamGroup): 
@@ -56,8 +58,9 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
-        if g.dinov2_feature_dir:
-            g.dinov2_feature_dir = os.path.abspath(g.dinov2_feature_dir)
+        dinov2_dir = getattr(g, "dinov2_feature_dir", "")
+        if dinov2_dir:
+            g.dinov2_feature_dir = os.path.abspath(dinov2_dir)
         # g.lf_path = os.path.join(g.source_path, g.language_features_name)
         return g
 

@@ -1,6 +1,8 @@
 import argparse
 import os
 from pathlib import Path
+import sys
+from typing import Optional
 
 import numpy as np
 from PIL import Image
@@ -19,7 +21,40 @@ def parse_args():
     parser.add_argument("--dtype", choices=["float16", "float32"], default="float16")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--extensions", default="jpg,jpeg,png")
+    default_local_repo = Path(__file__).resolve().parent / "third_party" / "dinov2"
+    parser.add_argument(
+        "--dinov2_dir",
+        default=str(default_local_repo) if default_local_repo.is_dir() else None,
+        help="Optional path to a local dinov2 repo. Useful on Python<3.10 where torch.hub main may not import.",
+    )
     return parser.parse_args()
+
+
+def load_dinov2_model(model_name: str, device: str, dinov2_dir: Optional[str]):
+    """
+    Load a DINOv2 backbone model.
+
+    - If `dinov2_dir` is provided, load from that local checkout (Python 3.8-friendly).
+    - Otherwise, fall back to `torch.hub.load("facebookresearch/dinov2", ...)`.
+    """
+    if dinov2_dir is not None:
+        repo_root = Path(dinov2_dir).expanduser().resolve()
+        if not repo_root.is_dir():
+            raise FileNotFoundError(f"--dinov2_dir not found: {repo_root}")
+        sys.path.insert(0, str(repo_root))
+        from dinov2.hub import backbones  # type: ignore
+
+        if not hasattr(backbones, model_name):
+            raise ValueError(
+                f"Unknown dinov2 model '{model_name}'. "
+                f"Expected one of: {', '.join(sorted([k for k in dir(backbones) if k.startswith('dinov2_')]))}"
+            )
+        model = getattr(backbones, model_name)(pretrained=True)
+    else:
+        model = torch.hub.load("facebookresearch/dinov2", model_name)
+
+    model.eval().to(device)
+    return model
 
 
 def resize_to_multiple(image, patch_size, image_size=None):
@@ -46,8 +81,7 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    model = torch.hub.load("facebookresearch/dinov2", args.model)
-    model.eval().to(args.device)
+    model = load_dinov2_model(args.model, args.device, args.dinov2_dir)
 
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)

@@ -115,9 +115,12 @@ def render_set(model_path, source_path, name, iteration, views, gaussians, pipel
             if not args.include_feature:
                 rendering = output["render"]
             else:
-                rendering = output["language_feature_image"]
-                rendering = torch.sigmoid(rendering)
-                rendering = (rendering>=0.5).float()
+                rendered_feature = output["language_feature_image"]
+                positive_idx = output["positive_idx"]
+                # train.py와 동일하게, positive_idx 채널만 사용해 1채널 마스크 생성
+                mask_logits = rendered_feature[positive_idx:positive_idx+1]
+                rendering = torch.sigmoid(mask_logits)
+                rendering = (rendering >= 0.5).float()
                 
             if not args.include_feature:
                 gt = view.original_image[0:3, :, :]
